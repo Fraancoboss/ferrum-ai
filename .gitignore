@@ -1,0 +1,11 @@
+/target
+/.env
+/.sqlx
+/.DS_Store
+/.agents
+/.claude
+/pami
+**/node_modules
+**/dist
+**/.npm-cache
+**/*.tsbuildinfo
