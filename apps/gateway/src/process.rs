@@ -86,6 +86,14 @@ pub fn build_provider_map() -> HashMap<ProviderKind, ProviderAdapter> {
         ProviderKind::Claude,
         ProviderAdapter::new(ProviderKind::Claude, "claude"),
     );
+    providers.insert(
+        ProviderKind::Ollama,
+        ProviderAdapter::new(ProviderKind::Ollama, "ollama"),
+    );
+    providers.insert(
+        ProviderKind::LlamaCpp,
+        ProviderAdapter::new(ProviderKind::LlamaCpp, "llama-cli"),
+    );
     providers
 }
 

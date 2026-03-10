@@ -90,6 +90,8 @@ impl ProviderAdapter {
         match self.provider {
             ProviderKind::Codex => "Codex CLI",
             ProviderKind::Claude => "Claude Code",
+            ProviderKind::Ollama => "Ollama",
+            ProviderKind::LlamaCpp => "llama.cpp",
         }
     }
 
@@ -109,6 +111,8 @@ impl ProviderAdapter {
             (ProviderKind::Claude, AuthAction::Status) => vec!["auth", "status", "--json"],
             (ProviderKind::Claude, AuthAction::Login) => vec!["auth", "login"],
             (ProviderKind::Claude, AuthAction::Logout) => vec!["auth", "logout"],
+            (ProviderKind::Ollama, _) => vec!["--version"],
+            (ProviderKind::LlamaCpp, _) => vec!["--version"],
         };
 
         CommandSpec {
@@ -144,11 +148,34 @@ impl ProviderAdapter {
                 "--output-format".to_owned(),
                 "stream-json".to_owned(),
             ],
+            (ProviderKind::Ollama, _) => vec![
+                "run".to_owned(),
+                request
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "llama3.1:8b".to_string()),
+            ],
+            (ProviderKind::LlamaCpp, _) => {
+                let model = request
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "var/models/llama.cpp/model.gguf".to_string());
+                vec!["-m".to_owned(), model, "-p".to_owned()]
+            }
         };
 
-        if let Some(model) = request.model.clone().filter(|value| !value.trim().is_empty()) {
-            args.push("--model".to_owned());
-            args.push(model);
+        if let Some(model) = request
+            .model
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+        {
+            match self.provider {
+                ProviderKind::Codex | ProviderKind::Claude => {
+                    args.push("--model".to_owned());
+                    args.push(model);
+                }
+                ProviderKind::Ollama | ProviderKind::LlamaCpp => {}
+            }
         }
 
         if self.provider == ProviderKind::Claude {
@@ -210,6 +237,13 @@ impl ProviderAdapter {
                     AuthStatus::Error
                 }
             }
+            ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+                if which(&self.program).is_ok() {
+                    AuthStatus::Authenticated
+                } else {
+                    AuthStatus::MissingDependency
+                }
+            }
         };
 
         build_provider_status(
@@ -217,9 +251,13 @@ impl ProviderAdapter {
             self.program.clone(),
             version,
             auth_status,
-            Some(stderr.trim().to_string())
-                .filter(|detail| !detail.is_empty())
-                .or_else(|| Some(stdout.trim().to_string()).filter(|detail| !detail.is_empty())),
+            if self.provider.is_local() {
+                Some("Local runtime, no remote auth required.".to_string())
+            } else {
+                Some(stderr.trim().to_string())
+                    .filter(|detail| !detail.is_empty())
+                    .or_else(|| Some(stdout.trim().to_string()).filter(|detail| !detail.is_empty()))
+            },
             issues,
         )
     }
@@ -348,5 +386,19 @@ mod tests {
         let adapter = ProviderAdapter::new(ProviderKind::Codex, "codex.cmd");
         let diagnostic = adapter.parse_auth_status(None, "ok", "", 0);
         assert_eq!(diagnostic.auth_status, AuthStatus::Authenticated);
+    }
+
+    #[test]
+    fn builds_ollama_run_with_default_model() {
+        let adapter = ProviderAdapter::new(ProviderKind::Ollama, "ollama");
+        let spec = adapter.run_command(&RunRequest {
+            prompt: "hola".into(),
+            cwd: PathBuf::from("."),
+            mode: RunMode::New,
+            provider_session_ref: None,
+            model: None,
+            effort: None,
+        });
+        assert_eq!(spec.args, vec!["run", "llama3.1:8b", "hola"]);
     }
 }

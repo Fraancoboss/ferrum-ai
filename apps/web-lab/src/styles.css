@@ -407,6 +407,301 @@ textarea {
   gap: 12px;
 }
 
+.agents-screen {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.agents-sidebar,
+.agents-main {
+  min-height: 0;
+}
+
+.agents-sidebar {
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  gap: 12px;
+  padding: 14px;
+  align-content: start;
+  overflow: hidden;
+}
+
+.agents-sidebar-head,
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-create {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-create-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.option-card {
+  min-height: 72px;
+  padding: 10px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  background: rgba(8, 14, 27, 0.84);
+}
+
+.option-card strong {
+  font-size: 0.95rem;
+}
+
+.option-card span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.option-card-active {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(17, 31, 58, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+}
+
+.workflow-list {
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  overflow: hidden;
+  padding-right: 2px;
+}
+
+.tooling-panel,
+.tooling-block,
+.mini-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tooling-panel {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  display: none;
+}
+
+.tooling-block {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(8, 14, 27, 0.7);
+}
+
+.mini-list-item {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-list-item {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(8, 14, 27, 0.9);
+}
+
+.workflow-list-item p,
+.agent-task,
+.muted-copy,
+.artifact-item p,
+.approval-item p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.workflow-list-item.active {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(17, 31, 58, 0.88);
+}
+
+.agents-main {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.agents-hero,
+.agent-empty-state {
+  padding: 14px;
+}
+
+.agents-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.agents-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.agent-metric {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: rgba(7, 13, 26, 0.78);
+  display: grid;
+  gap: 2px;
+}
+
+.agent-metric span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.agents-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  overflow: hidden;
+}
+
+.agent-panel {
+  min-height: 256px;
+  padding: 12px;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.agent-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-panel-head h4,
+.section-head h4,
+.agents-sidebar-head h3,
+.agents-hero h3,
+.agent-empty-state h3 {
+  margin: 0;
+}
+
+.agent-panel-tags,
+.agent-meta,
+.approval-actions,
+.artifact-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-meta {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.terminal-screen {
+  min-height: 0;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(2, 8, 18, 0.98), rgba(5, 12, 24, 0.96));
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.terminal-command {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.14);
+  color: #90f0b8;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.terminal-screen pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  color: #d9f5e4;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.agents-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.approvals-card,
+.artifacts-card {
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.approval-list,
+.artifact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-item,
+.artifact-item {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(8, 14, 27, 0.85);
+}
+
+.pagination-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.pagination-row button {
+  padding: 6px 10px;
+}
+
+.agent-error {
+  margin: 0;
+  color: #fb7185;
+}
+
 .provider-card {
   display: grid;
   gap: 12px;
@@ -1102,6 +1397,16 @@ label {
   .provider-grid {
     grid-template-columns: 1fr;
   }
+
+   .agents-screen,
+   .agents-dashboard-grid,
+   .agents-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .agents-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 980px) {
@@ -1129,5 +1434,13 @@ label {
 
   .topbar-actions {
     justify-content: space-between;
+  }
+
+  .agents-screen {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-create-grid {
+    grid-template-columns: 1fr;
   }
 }

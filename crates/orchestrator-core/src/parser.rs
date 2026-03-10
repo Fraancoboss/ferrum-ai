@@ -47,11 +47,8 @@ pub fn normalize_stream_line(
     }
 
     if let Some(text) = text.clone().filter(|text| {
-        !text.trim().is_empty()
-            && !looks_like_user_echo(&raw)
-            && !looks_like_non_chat_output(&raw)
-    })
-    {
+        !text.trim().is_empty() && !looks_like_user_echo(&raw) && !looks_like_non_chat_output(&raw)
+    }) {
         events.push(NormalizedEvent {
             event_kind: if is_final_event(&raw) {
                 EventKind::AssistantFinal
@@ -342,8 +339,10 @@ fn looks_like_non_chat_output(value: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|value| value.to_ascii_lowercase());
 
-    matches!(item_type.as_deref(), Some("reasoning" | "tool_call" | "tool_result"))
-        || body.contains("\"type\":\"turn.started\"")
+    matches!(
+        item_type.as_deref(),
+        Some("reasoning" | "tool_call" | "tool_result")
+    ) || body.contains("\"type\":\"turn.started\"")
         || body.contains("\"type\":\"turn.completed\"")
         || body.contains("\"type\":\"item.started\"")
         || body.contains("\"type\":\"item.updated\"")
@@ -471,6 +470,10 @@ mod tests {
             }
         });
         let events = normalize_stream_line(ProviderKind::Codex, 1, &payload.to_string());
-        assert!(events.iter().any(|event| event.text.as_deref() == Some("Hola desde Codex")));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.text.as_deref() == Some("Hola desde Codex"))
+        );
     }
 }

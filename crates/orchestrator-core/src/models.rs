@@ -7,6 +7,8 @@ use serde_json::Value;
 pub enum ProviderKind {
     Codex,
     Claude,
+    Ollama,
+    LlamaCpp,
 }
 
 impl ProviderKind {
@@ -14,7 +16,30 @@ impl ProviderKind {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::Ollama => "ollama",
+            Self::LlamaCpp => "llama_cpp",
         }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude",
+            Self::Ollama => "Ollama",
+            Self::LlamaCpp => "llama.cpp",
+        }
+    }
+
+    pub fn is_local(self) -> bool {
+        matches!(self, Self::Ollama | Self::LlamaCpp)
+    }
+
+    pub fn requires_auth(self) -> bool {
+        matches!(self, Self::Codex | Self::Claude)
+    }
+
+    pub fn supports_resume(self) -> bool {
+        matches!(self, Self::Codex | Self::Claude)
     }
 }
 

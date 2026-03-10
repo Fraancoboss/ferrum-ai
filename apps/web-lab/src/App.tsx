@@ -8,11 +8,13 @@ import {
   type KeyboardEvent,
 } from "react";
 
+import { AgentMode } from "./AgentMode";
 import { api } from "./api";
 import type {
   AuthLaunchResponse,
   ChatMessage,
   ChatSummary,
+  LlamaCppModel,
   ProviderKind,
   ProviderPreferences,
   ProviderView,
@@ -20,7 +22,7 @@ import type {
   UsageSummary,
 } from "./types";
 
-type Page = "providers" | "chats" | "chat";
+type Page = "providers" | "agents" | "chats" | "chat";
 
 type MarkdownBlock =
   | { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
@@ -52,6 +54,8 @@ const MODEL_OPTIONS: Record<ProviderKind, string[]> = {
     "gpt-5-mini",
   ],
   claude: ["opus-4.1", "sonnet-4", "sonnet", "haiku"],
+  ollama: ["llama3.1:8b", "qwen2.5-coder:7b", "deepseek-r1:8b"],
+  llama_cpp: ["var/models/llama.cpp/model.gguf"],
 };
 
 export function App() {
@@ -59,6 +63,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [providers, setProviders] = useState<ProviderView[]>([]);
+  const [llamaModels, setLlamaModels] = useState<LlamaCppModel[]>([]);
   const [usage, setUsage] = useState<UsageSummary>({ daily: [], limits: [] });
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -96,7 +101,7 @@ export function App() {
         await api.health();
         if (!alive) return;
 
-        await Promise.all([reloadProviders(), reloadChats(), reloadUsage()]);
+        await Promise.all([reloadProviders(), reloadChats(), reloadUsage(), reloadLlamaModels()]);
         if (!alive) return;
 
         setStatus("ready");
@@ -150,9 +155,15 @@ export function App() {
       .filter((value): value is string => Boolean(value));
 
     return Array.from(
-      new Set([...modelsFromChats, ...MODEL_OPTIONS.codex, ...MODEL_OPTIONS.claude]),
+      new Set([
+        ...modelsFromChats,
+        ...getModelOptions("codex", llamaModels),
+        ...getModelOptions("claude", llamaModels),
+        ...getModelOptions("ollama", llamaModels),
+        ...getModelOptions("llama_cpp", llamaModels),
+      ]),
     );
-  }, [chats]);
+  }, [chats, llamaModels]);
 
   const timeline = useMemo(() => {
     if (!sending) return messages;
@@ -195,6 +206,10 @@ export function App() {
   async function reloadProviders() {
     const data = await api.listProviders();
     setProviders(data);
+  }
+
+  async function reloadLlamaModels() {
+    setLlamaModels(await api.listLlamaCppModels());
   }
 
   async function reloadChats() {
@@ -463,6 +478,14 @@ export function App() {
             </button>
 
             <button
+              className={page === "agents" ? "nav-item active" : "nav-item"}
+              onClick={() => setPage("agents")}
+            >
+              <IconAgents />
+              <span className="nav-label">Agents</span>
+            </button>
+
+            <button
               className={page === "chats" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("chats")}
             >
@@ -505,6 +528,8 @@ export function App() {
             <span className="eyebrow">
               {page === "providers"
                 ? "Provider setup"
+                : page === "agents"
+                  ? "Workflow orchestration"
                 : page === "chats"
                   ? "Conversation index"
                   : "Active conversation"}
@@ -512,6 +537,8 @@ export function App() {
             <h2>
               {page === "providers"
                 ? "Providers"
+                : page === "agents"
+                  ? "Agent Mode"
                 : page === "chats"
                   ? "Chats"
                   : activeChat?.title ?? "Chat"}
@@ -519,6 +546,8 @@ export function App() {
             <p>
               {page === "providers"
                 ? "Choose models, tune effort, and monitor auth without breaking flow."
+                : page === "agents"
+                  ? "Run a local-first coordinator with multiple background terminals and approval gates."
                 : page === "chats"
                   ? "Filter by provider, model, or keyword and open any conversation."
                   : activeChat
@@ -545,6 +574,7 @@ export function App() {
         {page === "providers" ? (
           <ProvidersScreen
             providers={providers}
+            llamaModels={llamaModels}
             usage={usage}
             todayUsage={todayUsage}
             authenticatedProviders={authenticatedProviders}
@@ -553,6 +583,8 @@ export function App() {
             onSave={saveProviderPreferences}
           />
         ) : null}
+
+        {page === "agents" ? <AgentMode providers={providers} /> : null}
 
         {page === "chats" ? (
           <ChatsScreen
@@ -602,11 +634,12 @@ export function App() {
         <NewChatModal
           provider={newChatProvider}
           model={newChatModel}
+          llamaModels={llamaModels}
           effort={newChatEffort}
           title={newChatTitle}
           onProviderChange={(provider) => {
             setNewChatProvider(provider);
-            setNewChatModel(MODEL_OPTIONS[provider][0]);
+            setNewChatModel(getModelOptions(provider, llamaModels)[0]);
           }}
           onModelChange={setNewChatModel}
           onEffortChange={setNewChatEffort}
@@ -621,6 +654,7 @@ export function App() {
 
 function ProvidersScreen(_: {
   providers: ProviderView[];
+  llamaModels: LlamaCppModel[];
   usage: UsageSummary;
   todayUsage: { input: number; output: number; total: number };
   authenticatedProviders: number;
@@ -666,6 +700,7 @@ function ProvidersScreen(_: {
           <ProviderCard
             key={provider.provider}
             provider={provider}
+            llamaModels={props.llamaModels}
             usage={todayRows.find((row) => row.provider === provider.provider)}
             onAuth={props.onAuth}
             onSave={props.onSave}
@@ -678,12 +713,13 @@ function ProvidersScreen(_: {
 
 function ProviderCard(_: {
   provider: ProviderView;
+  llamaModels: LlamaCppModel[];
   usage: UsageSummary["daily"][number] | undefined;
   onAuth: (provider: ProviderKind, action: "login" | "logout") => Promise<void>;
   onSave: (provider: ProviderKind, model: string, effort: string) => Promise<void>;
 }) {
   const props = _;
-  const models = MODEL_OPTIONS[props.provider.provider];
+  const models = getModelOptions(props.provider.provider, props.llamaModels);
   const [model, setModel] = useState(
     props.provider.selected_model && models.includes(props.provider.selected_model)
       ? props.provider.selected_model
@@ -714,6 +750,7 @@ function ProviderCard(_: {
       <div className="provider-current">
         <span className="chip chip-blue">{model}</span>
         <span className="chip">{effort}</span>
+        <span className="chip">{props.provider.data_boundary}</span>
       </div>
 
       <div className="form-row">
@@ -745,18 +782,22 @@ function ProviderCard(_: {
         >
           Save profile
         </button>
-        <button
-          className="ghost"
-          onClick={() => void props.onAuth(props.provider.provider, "login")}
-        >
-          Login
-        </button>
-        <button
-          className="ghost"
-          onClick={() => void props.onAuth(props.provider.provider, "logout")}
-        >
-          Logout
-        </button>
+        {props.provider.auth_required ? (
+          <>
+            <button
+              className="ghost"
+              onClick={() => void props.onAuth(props.provider.provider, "login")}
+            >
+              Login
+            </button>
+            <button
+              className="ghost"
+              onClick={() => void props.onAuth(props.provider.provider, "logout")}
+            >
+              Logout
+            </button>
+          </>
+        ) : null}
       </div>
 
       <p className="provider-detail">{props.provider.detail ?? "No extra detail reported."}</p>
@@ -843,6 +884,8 @@ function ChatsScreen(_: {
           <option value="all">All providers</option>
           <option value="codex">Codex</option>
           <option value="claude">Claude</option>
+          <option value="ollama">Ollama</option>
+          <option value="llama_cpp">llama.cpp</option>
         </select>
 
         <select
@@ -1097,6 +1140,7 @@ function MessageBubble(_: { message: ChatMessage; pending: boolean }) {
 function NewChatModal(_: {
   provider: ProviderKind;
   model: string;
+  llamaModels: LlamaCppModel[];
   effort: (typeof EFFORT_OPTIONS)[number];
   title: string;
   onProviderChange: (provider: ProviderKind) => void;
@@ -1132,6 +1176,8 @@ function NewChatModal(_: {
           >
             <option value="codex">Codex</option>
             <option value="claude">Claude</option>
+            <option value="ollama">Ollama</option>
+            <option value="llama_cpp">llama.cpp</option>
           </select>
         </div>
 
@@ -1141,7 +1187,7 @@ function NewChatModal(_: {
             value={props.model}
             onChange={(event) => props.onModelChange(event.target.value)}
           >
-            {MODEL_OPTIONS[props.provider].map((model) => (
+            {getModelOptions(props.provider, props.llamaModels).map((model) => (
               <option key={model} value={model}>
                 {model}
               </option>
@@ -1258,6 +1304,17 @@ function IconProviders() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M4 6h16M4 12h16M4 18h10" />
+    </svg>
+  );
+}
+
+function IconAgents() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 6h14" />
+      <path d="M5 12h6" />
+      <path d="M5 18h10" />
+      <path d="M16 10l3 2-3 2" />
     </svg>
   );
 }
@@ -1450,7 +1507,26 @@ function safeParseEvent(raw: string): StreamEvent | null {
 }
 
 function labelProvider(provider: ProviderKind) {
-  return provider === "codex" ? "Codex" : "Claude";
+  switch (provider) {
+    case "codex":
+      return "Codex";
+    case "claude":
+      return "Claude";
+    case "ollama":
+      return "Ollama";
+    case "llama_cpp":
+      return "llama.cpp";
+  }
+}
+
+function getModelOptions(provider: ProviderKind, llamaModels: LlamaCppModel[]) {
+  if (provider === "llama_cpp") {
+    const registered = llamaModels
+      .filter((model) => model.enabled)
+      .map((model) => model.file_path);
+    return registered.length > 0 ? registered : MODEL_OPTIONS.llama_cpp;
+  }
+  return MODEL_OPTIONS[provider];
 }
 
 function asError(value: unknown): string {

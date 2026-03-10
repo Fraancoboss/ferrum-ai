@@ -4,7 +4,10 @@ use orchestrator_core::{NormalizedEvent, ProviderAdapter, ProviderKind};
 use tokio::sync::{RwLock, broadcast};
 use uuid::Uuid;
 
-use crate::{config::Config, db::Database};
+use crate::{
+    config::Config,
+    db::{Database, TerminalOutput},
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -43,6 +46,20 @@ pub fn default_provider_prefs() -> HashMap<ProviderKind, ProviderPreferences> {
                 effort: Some("medium".to_string()),
             },
         ),
+        (
+            ProviderKind::Ollama,
+            ProviderPreferences {
+                model: Some("llama3.1:8b".to_string()),
+                effort: None,
+            },
+        ),
+        (
+            ProviderKind::LlamaCpp,
+            ProviderPreferences {
+                model: Some("var/models/llama.cpp/model.gguf".to_string()),
+                effort: None,
+            },
+        ),
     ])
 }
 
@@ -50,6 +67,7 @@ pub fn default_provider_prefs() -> HashMap<ProviderKind, ProviderPreferences> {
 pub struct EventHub {
     runs: RwLock<HashMap<Uuid, broadcast::Sender<NormalizedEvent>>>,
     auth: RwLock<HashMap<Uuid, broadcast::Sender<NormalizedEvent>>>,
+    terminals: RwLock<HashMap<Uuid, broadcast::Sender<TerminalOutput>>>,
 }
 
 impl EventHub {
@@ -79,6 +97,26 @@ impl EventHub {
         let _ = sender.send(event);
     }
 
+    pub async fn ensure_terminal_sender(
+        &self,
+        terminal_id: Uuid,
+    ) -> broadcast::Sender<TerminalOutput> {
+        self.ensure_terminal_output_sender(&self.terminals, terminal_id)
+            .await
+    }
+
+    pub async fn subscribe_terminal(
+        &self,
+        terminal_id: Uuid,
+    ) -> broadcast::Receiver<TerminalOutput> {
+        self.ensure_terminal_sender(terminal_id).await.subscribe()
+    }
+
+    pub async fn publish_terminal(&self, terminal_id: Uuid, chunk: TerminalOutput) {
+        let sender = self.ensure_terminal_sender(terminal_id).await;
+        let _ = sender.send(chunk);
+    }
+
     async fn ensure_sender(
         &self,
         store: &RwLock<HashMap<Uuid, broadcast::Sender<NormalizedEvent>>>,
@@ -95,6 +133,25 @@ impl EventHub {
         write
             .entry(id)
             .or_insert_with(|| broadcast::channel(256).0)
+            .clone()
+    }
+
+    async fn ensure_terminal_output_sender(
+        &self,
+        store: &RwLock<HashMap<Uuid, broadcast::Sender<TerminalOutput>>>,
+        id: Uuid,
+    ) -> broadcast::Sender<TerminalOutput> {
+        {
+            let read = store.read().await;
+            if let Some(existing) = read.get(&id) {
+                return existing.clone();
+            }
+        }
+
+        let mut write = store.write().await;
+        write
+            .entry(id)
+            .or_insert_with(|| broadcast::channel(512).0)
             .clone()
     }
 }

@@ -76,7 +76,7 @@ Default values are enough for a first local run:
 
 ```dotenv
 BIND_ADDR=127.0.0.1:3000
-DATABASE_URL=postgres://chatbot:chatbot@127.0.0.1:5432/chatbot
+DATABASE_URL=postgres://chatbot:chatbot@127.0.0.1:5433/chatbot
 WORKSPACE_DIR=.
 FRONTEND_DIR=apps/web-lab
 CODEX_DAILY_SOFT_LIMIT_TOKENS=500000

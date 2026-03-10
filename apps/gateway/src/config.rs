@@ -12,6 +12,7 @@ pub struct Config {
     pub database_url: String,
     pub workspace_dir: PathBuf,
     pub frontend_dir: PathBuf,
+    pub llama_cpp_model_dir: PathBuf,
     pub codex_daily_soft_limit: Option<i64>,
     pub claude_daily_soft_limit: Option<i64>,
 }
@@ -23,7 +24,7 @@ impl Config {
             .parse()?;
 
         let database_url = env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://chatbot:chatbot@localhost:5432/chatbot".to_string());
+            .unwrap_or_else(|_| "postgres://chatbot:chatbot@localhost:5433/chatbot".to_string());
 
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let workspace_dir = env::var("WORKSPACE_DIR")
@@ -32,12 +33,16 @@ impl Config {
         let frontend_dir = env::var("FRONTEND_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| crate_dir.join("../web-lab/dist"));
+        let llama_cpp_model_dir = env::var("LLAMA_CPP_MODEL_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| crate_dir.join("../../var/models/llama.cpp"));
 
         Ok(Self {
             bind_addr,
             database_url,
             workspace_dir: normalize_path(workspace_dir),
             frontend_dir: normalize_path(frontend_dir),
+            llama_cpp_model_dir: normalize_path(llama_cpp_model_dir),
             codex_daily_soft_limit: parse_optional_i64("CODEX_DAILY_SOFT_LIMIT_TOKENS")?,
             claude_daily_soft_limit: parse_optional_i64("CLAUDE_DAILY_SOFT_LIMIT_TOKENS")?,
         })
@@ -47,6 +52,7 @@ impl Config {
         match provider {
             ProviderKind::Codex => self.codex_daily_soft_limit,
             ProviderKind::Claude => self.claude_daily_soft_limit,
+            ProviderKind::Ollama | ProviderKind::LlamaCpp => None,
         }
     }
 }
