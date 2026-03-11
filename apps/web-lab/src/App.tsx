@@ -436,6 +436,9 @@ export function App() {
 
   return (
     <div className={sidebarOpen ? "app" : "app sidebar-collapsed"}>
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <aside className="sidebar">
         <div className="sidebar-top">
           <div className="brand-row">
@@ -460,6 +463,8 @@ export function App() {
             <button
               className={page === "providers" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("providers")}
+              aria-label="Open Providers"
+              aria-current={page === "providers" ? "page" : undefined}
             >
               <IconProviders />
               <span className="nav-label">Providers</span>
@@ -468,6 +473,8 @@ export function App() {
             <button
               className={page === "agents" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("agents")}
+              aria-label="Open Agents"
+              aria-current={page === "agents" ? "page" : undefined}
             >
               <IconAgents />
               <span className="nav-label">Agents</span>
@@ -476,6 +483,8 @@ export function App() {
             <button
               className={page === "skills" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("skills")}
+              aria-label="Open Skills"
+              aria-current={page === "skills" ? "page" : undefined}
             >
               <IconSkills />
               <span className="nav-label">Skills</span>
@@ -484,6 +493,8 @@ export function App() {
             <button
               className={page === "mcps" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("mcps")}
+              aria-label="Open MCPs"
+              aria-current={page === "mcps" ? "page" : undefined}
             >
               <IconMcp />
               <span className="nav-label">MCPs</span>
@@ -492,6 +503,8 @@ export function App() {
             <button
               className={page === "chats" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("chats")}
+              aria-label="Open Chats"
+              aria-current={page === "chats" ? "page" : undefined}
             >
               <IconChats />
               <span className="nav-label">Chats</span>
@@ -526,7 +539,7 @@ export function App() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" id="main-content" tabIndex={-1}>
         <header className="topbar">
           <div className="topbar-main">
             <span className="eyebrow">
@@ -567,9 +580,9 @@ export function App() {
                 : page === "chats"
                   ? "Filter by provider, model, or keyword and open any conversation."
                   : activeChat
-                    ? `${labelProvider(activeChat.provider)} | ${
-                        activeChat.last_model ?? "model pending"
-                      }`
+                    ? `${labelProvider(activeChat.provider)} | ${formatChatModelLabel(
+                        activeChat.last_model,
+                      )}`
                     : "Select a chat from the list"}
             </p>
           </div>
@@ -895,6 +908,7 @@ function ChatsScreen(_: {
 
       <div className="filters">
         <select
+          aria-label="Filter chats by provider"
           value={props.providerFilter}
           onChange={(event) =>
             props.onProviderFilterChange(event.target.value as ProviderKind | "all")
@@ -908,6 +922,7 @@ function ChatsScreen(_: {
         </select>
 
         <select
+          aria-label="Filter chats by model"
           value={props.modelFilter}
           onChange={(event) => props.onModelFilterChange(event.target.value)}
         >
@@ -920,6 +935,7 @@ function ChatsScreen(_: {
         </select>
 
         <input
+          aria-label="Search chats"
           value={props.keywordFilter}
           onChange={(event) => props.onKeywordFilterChange(event.target.value)}
           placeholder="Search by title, model, or id"
@@ -938,8 +954,8 @@ function ChatsScreen(_: {
                 <strong>{chat.title}</strong>
                 <div className="chat-index-tags">
                   <span className="chip">{labelProvider(chat.provider)}</span>
-                  <span className="chip chip-blue">
-                    {chat.last_model ?? "model pending"}
+                  <span className={chatModelChipClass(chat.last_model)}>
+                    {formatChatModelLabel(chat.last_model)}
                   </span>
                 </div>
               </div>
@@ -989,6 +1005,8 @@ function ConversationScreen(_: {
   onSendMessage: () => Promise<void>;
 }) {
   const props = _;
+  const hasDraft = props.composer.trim().length > 0 || props.attachments.length > 0;
+  const canSend = Boolean(props.chat) && !props.sending && hasDraft;
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
@@ -997,7 +1015,7 @@ function ConversationScreen(_: {
 
     event.preventDefault();
 
-    if (props.sending || (!props.composer.trim() && props.attachments.length === 0)) {
+    if (!canSend) {
       return;
     }
 
@@ -1012,15 +1030,26 @@ function ConversationScreen(_: {
           <h3>{props.chat?.title ?? "Select a chat"}</h3>
           <p>
             {props.chat
-              ? `${labelProvider(props.chat.provider)} | ${
-                  props.chat.last_model ?? "model pending"
-                }`
+              ? `${labelProvider(props.chat.provider)} | ${formatChatModelLabel(
+                  props.chat.last_model,
+                )}`
               : "Open a chat from the list or create a new one."}
           </p>
         </div>
+        {props.chat ? (
+          <div className="conversation-status-strip" aria-label="Conversation status">
+            <span className="chip">{labelProvider(props.chat.provider)}</span>
+            <span className={chatModelChipClass(props.chat.last_model)}>
+              {formatChatModelLabel(props.chat.last_model)}
+            </span>
+            {isLocalProvider(props.chat.provider) ? (
+              <span className="chip">Host-local runtime</span>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
-      <div className="message-stream">
+      <div className="message-stream" aria-live="polite" aria-busy={props.sending}>
         {props.timeline.length === 0 ? (
           <div className="empty-chat-state">
             <span className="eyebrow">No messages yet</span>
@@ -1068,8 +1097,10 @@ function ConversationScreen(_: {
 
         <div className="composer-note">
           {props.sending
-            ? "Streaming response from the local provider..."
-            : "Enter sends. Shift+Enter adds a new line. Markdown is rendered after persistence."}
+            ? isLocalProvider(props.chat?.provider)
+              ? "Streaming from the local runtime. The first reply can be slower while the model warms up."
+              : "Streaming response from the provider..."
+            : "Use Send or press Enter. Shift+Enter adds a new line. Markdown renders after persistence."}
         </div>
 
         <div className="composer">
@@ -1085,13 +1116,28 @@ function ConversationScreen(_: {
             <span>+</span>
           </label>
 
+          <label className="visually-hidden" htmlFor="chat-composer">
+            Message composer
+          </label>
           <textarea
+            id="chat-composer"
             value={props.composer}
             onChange={(event) => props.onComposerChange(event.target.value)}
             onKeyDown={handleComposerKeyDown}
             placeholder="Ask for a summary, a design explanation, or attach files for analysis..."
             rows={4}
+            disabled={!props.chat}
           />
+
+          <button
+            type="button"
+            className="composer-send"
+            disabled={!canSend}
+            onClick={() => void props.onSendMessage()}
+            aria-label="Send message"
+          >
+            {props.sending ? "Sending..." : "Send"}
+          </button>
         </div>
       </div>
     </section>
@@ -1113,7 +1159,7 @@ function MessageBubble(_: { message: ChatMessage; pending: boolean }) {
       <div className={props.pending ? "message-card pending" : "message-card"}>
         <div className="message-meta">
           <span className="message-author">
-            {isUser ? "You" : props.pending ? "Thinking" : "Assistant"}
+            {isUser ? "You" : props.pending ? "Generating" : "Assistant"}
           </span>
           <span>{formatDate(props.message.created_at)}</span>
         </div>
@@ -1122,6 +1168,7 @@ function MessageBubble(_: { message: ChatMessage; pending: boolean }) {
           <div className="thinking-block">
             <div className="thinking-status">
               <span className="live-pill">LIVE</span>
+              <span className="status-copy">Response in progress</span>
               <TypingDots />
             </div>
 
@@ -1151,7 +1198,6 @@ function MessageBubble(_: { message: ChatMessage; pending: boolean }) {
         ) : null}
       </div>
 
-      {isUser ? <div className="avatar user">You</div> : null}
     </article>
   );
 }
@@ -1214,21 +1260,27 @@ function NewChatModal(_: {
           </select>
         </div>
 
-        <div className="form-row">
-          <label>Effort</label>
-          <select
-            value={props.effort}
-            onChange={(event) =>
-              props.onEffortChange(event.target.value as (typeof EFFORT_OPTIONS)[number])
-            }
-          >
-            {EFFORT_OPTIONS.map((effort) => (
-              <option key={effort} value={effort}>
-                {effort}
-              </option>
-            ))}
-          </select>
-        </div>
+        {supportsEffort(props.provider) ? (
+          <div className="form-row">
+            <label>Effort</label>
+            <select
+              value={props.effort}
+              onChange={(event) =>
+                props.onEffortChange(event.target.value as (typeof EFFORT_OPTIONS)[number])
+              }
+            >
+              {EFFORT_OPTIONS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <p className="modal-note">
+            Effort is not used by local runtimes yet. Model choice matters more here.
+          </p>
+        )}
 
         <div className="form-row">
           <label>Title</label>
@@ -1293,11 +1345,16 @@ function Panel(_: {
 
   return (
     <article className="panel">
-      <header className="panel-head" onClick={props.onToggle}>
-        <div className="panel-title">
+      <header className="panel-head">
+        <button
+          type="button"
+          className="panel-toggle"
+          onClick={props.onToggle}
+          aria-expanded={props.open}
+        >
           <span className={props.open ? "chevron open" : "chevron"}>v</span>
           <strong>{props.title}</strong>
-        </div>
+        </button>
 
         <button
           className="ghost panel-clear"
@@ -1560,6 +1617,22 @@ function labelProvider(provider: ProviderKind) {
     case "llama_cpp":
       return "llama.cpp";
   }
+}
+
+function formatChatModelLabel(model?: string | null) {
+  return model?.trim() ? model : "Model unreported";
+}
+
+function chatModelChipClass(model?: string | null) {
+  return model?.trim() ? "chip chip-blue" : "chip chip-muted";
+}
+
+function isLocalProvider(provider?: ProviderKind | null) {
+  return provider === "ollama" || provider === "llama_cpp";
+}
+
+function supportsEffort(provider: ProviderKind) {
+  return provider === "codex" || provider === "claude";
 }
 
 function getModelOptions(provider: ProviderKind, llamaModels: LlamaCppModel[]) {

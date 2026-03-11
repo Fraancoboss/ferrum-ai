@@ -99,6 +99,29 @@ export function ProvidersControlPlane(props: ProvidersControlPlaneProps) {
     () => jobs.filter((job) => job.status === "pending" || job.status === "running"),
     [jobs],
   );
+  const governanceIssues = useMemo(() => {
+    const issues = new Set<string>();
+
+    for (const issue of inventory.issues) {
+      issues.add(issue);
+    }
+
+    for (const issue of governance?.inventory_issues ?? []) {
+      issues.add(issue);
+    }
+
+    for (const provider of governance?.local_providers ?? []) {
+      if (provider.status_label !== "healthy" && provider.detail) {
+        issues.add(`${provider.display_name}: ${provider.detail}`);
+      }
+
+      for (const issue of provider.issues) {
+        issues.add(`${provider.display_name}: ${issue}`);
+      }
+    }
+
+    return Array.from(issues);
+  }, [governance?.inventory_issues, governance?.local_providers, inventory.issues]);
 
   useEffect(() => {
     void loadData();
@@ -533,7 +556,7 @@ export function ProvidersControlPlane(props: ProvidersControlPlaneProps) {
               />
               <MetricInline
                 label="Inventory issues"
-                value={String(governance?.inventory_issue_count ?? inventory.issues.length)}
+                value={String(governanceIssues.length)}
               />
               <MetricInline
                 label="Recent jobs"
@@ -551,6 +574,12 @@ export function ProvidersControlPlane(props: ProvidersControlPlaneProps) {
               </span>
               <span className="chip">Host-first</span>
             </div>
+            {governanceIssues.length > 0 ? (
+              <p className="provider-inline-note">
+                Governance has active runtime issues. Review local provider health before relying
+                on host-local execution.
+              </p>
+            ) : null}
           </article>
 
           <article className="card providers-governance-panel">
@@ -574,9 +603,9 @@ export function ProvidersControlPlane(props: ProvidersControlPlaneProps) {
                 <h4>Current blockers and warnings</h4>
               </div>
             </div>
-            {(governance?.inventory_issues.length ?? 0) > 0 ? (
+            {governanceIssues.length > 0 ? (
               <div className="issues-list">
-                {governance?.inventory_issues.map((issue) => (
+                {governanceIssues.map((issue) => (
                   <span key={issue} className="issue-pill">
                     {issue}
                   </span>
@@ -678,6 +707,9 @@ function ProviderCard(props: {
       <div className="provider-current">
         <span className="chip">{props.provider.display_name}</span>
         <span className="chip">{props.provider.data_boundary}</span>
+        {isLocalProvider(props.provider.provider) ? (
+          <span className="chip">Host-local runtime</span>
+        ) : null}
       </div>
 
       <div className="workflow-create-grid">
@@ -691,16 +723,22 @@ function ProviderCard(props: {
             ))}
           </select>
         </div>
-        <div className="form-row">
-          <label>Effort</label>
-          <select value={effort} onChange={(event) => setEffort(event.target.value)}>
-            {EFFORT_OPTIONS.map((candidate) => (
-              <option key={candidate} value={candidate}>
-                {candidate}
-              </option>
-            ))}
-          </select>
-        </div>
+        {supportsEffort(props.provider.provider) ? (
+          <div className="form-row">
+            <label>Effort</label>
+            <select value={effort} onChange={(event) => setEffort(event.target.value)}>
+              {EFFORT_OPTIONS.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {candidate}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="provider-inline-note">
+            Effort is not used by local runtimes yet. Prioritize the right model and hardware fit.
+          </div>
+        )}
       </div>
 
       <div className="provider-actions">
@@ -967,6 +1005,10 @@ function readWebGlRenderer() {
 
 function isLocalProvider(provider: ProviderKind) {
   return provider === "ollama" || provider === "llama_cpp";
+}
+
+function supportsEffort(provider: ProviderKind) {
+  return provider === "codex" || provider === "claude";
 }
 
 function getModelOptions(provider: ProviderKind, llamaModels: LlamaCppModel[]) {

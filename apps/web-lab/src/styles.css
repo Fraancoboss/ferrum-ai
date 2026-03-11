@@ -44,6 +44,11 @@ textarea {
   font: inherit;
 }
 
+:focus-visible {
+  outline: 2px solid rgba(125, 180, 255, 0.92);
+  outline-offset: 2px;
+}
+
 button {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -54,6 +59,7 @@ button {
     transform 0.18s ease,
     border-color 0.18s ease,
     background 0.18s ease;
+  min-height: 40px;
 }
 
 button:hover {
@@ -75,6 +81,7 @@ textarea {
   background: rgba(8, 15, 29, 0.96);
   color: var(--text);
   padding: 12px 14px;
+  min-height: 44px;
 }
 
 textarea {
@@ -89,6 +96,35 @@ textarea {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   transition: grid-template-columns 0.28s ease;
   overflow: visible;
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -48px;
+  z-index: 100;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(125, 180, 255, 0.55);
+  background: rgba(8, 15, 29, 0.98);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: 16px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .app.sidebar-collapsed {
@@ -184,6 +220,10 @@ textarea {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.nav-item.active {
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.12);
+}
+
 .nav-item svg {
   width: 17px;
   height: 17px;
@@ -233,6 +273,9 @@ textarea {
 .sidebar-panels {
   display: grid;
   gap: 8px;
+  max-height: 42vh;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .panel {
@@ -249,6 +292,18 @@ textarea {
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--line);
+}
+
+.panel-toggle {
+  flex: 1;
+  min-height: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .panel-title {
@@ -273,7 +328,7 @@ textarea {
   margin: 0;
   padding: 10px 12px;
   max-height: 104px;
-  overflow: hidden;
+  overflow: auto;
   background: rgba(4, 9, 18, 0.95);
   color: #c9dcff;
   font-size: 0.76rem;
@@ -645,6 +700,23 @@ textarea {
   margin: 6px 0 0;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.workflow-list-empty {
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.workflow-list-empty strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.workflow-list-empty p,
+.agent-empty-grid p {
+  margin: 8px 0 0;
 }
 
 .workflow-list-item.active {
@@ -1109,6 +1181,12 @@ textarea {
   color: #bedcff;
 }
 
+.chip-muted {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(148, 163, 184, 0.06);
+  color: #b5c4df;
+}
+
 .provider-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1124,6 +1202,18 @@ textarea {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.provider-inline-note,
+.modal-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 14px;
+  background: rgba(59, 130, 246, 0.08);
+  color: #d8e8ff;
+  font-size: 0.84rem;
+  line-height: 1.5;
 }
 
 .provider-usage {
@@ -1260,6 +1350,11 @@ textarea {
 .conversation-header {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .conversation-header h3 {
@@ -1269,6 +1364,13 @@ textarea {
 .conversation-header p {
   margin: 8px 0 0;
   color: var(--muted);
+}
+
+.conversation-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .message-stream {
@@ -1386,6 +1488,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .live-pill {
@@ -1398,6 +1501,11 @@ textarea {
   color: #bfdbfe;
   font-size: 0.72rem;
   letter-spacing: 0.08em;
+}
+
+.status-copy {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .typing-dots {
@@ -1503,7 +1611,7 @@ textarea {
 
 .composer {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
   gap: 12px;
   padding: 14px 16px;
@@ -1564,6 +1672,19 @@ textarea {
 
 .attach-button input {
   display: none;
+}
+
+.composer-send {
+  min-width: 104px;
+  padding: 0 18px;
+  font-weight: 600;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.95), rgba(37, 99, 235, 0.92));
+  border-color: rgba(125, 180, 255, 0.7);
+}
+
+.composer-send:disabled {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line);
 }
 
 .attachment-list {
@@ -1664,6 +1785,17 @@ label {
   gap: 10px;
 }
 
+.agent-empty-state {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-empty-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 @keyframes bounce {
   0%,
   80%,
@@ -1755,6 +1887,10 @@ label {
     grid-template-columns: 1fr;
   }
 
+  .agent-empty-grid {
+    grid-template-columns: 1fr;
+  }
+
   .skills-workbench,
   .skills-detail-columns {
     grid-template-columns: 1fr;
@@ -1788,12 +1924,25 @@ label {
     justify-content: space-between;
   }
 
+  .conversation-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .agents-screen {
     grid-template-columns: 1fr;
   }
 
   .workflow-create-grid {
     grid-template-columns: 1fr;
+  }
+
+  .composer {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .composer-send {
+    grid-column: 1 / -1;
   }
 
   .tooling-layout,

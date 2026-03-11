@@ -392,28 +392,38 @@ export function AgentMode({ providers }: AgentModeProps) {
         </div>
 
         <div className="workflow-list">
-          {visibleWorkflows.items.map((workflow) => (
-            <button
-              key={workflow.id}
-              className={
-                workflow.id === activeWorkflowId
-                  ? "workflow-list-item active"
-                  : "workflow-list-item"
-              }
-              onClick={() => setActiveWorkflowId(workflow.id)}
-            >
-              <div>
-                <strong>{workflow.title}</strong>
-                <p>{workflow.objective}</p>
-                <p className="muted-copy">
-                  {workflow.template_key} · {workflow.phase} · attempt {workflow.attempt_counter}
-                </p>
-              </div>
-              <span className={`badge workflow-${workflow.status}`}>
-                {workflow.status}
-              </span>
-            </button>
-          ))}
+          {visibleWorkflows.items.length === 0 ? (
+            <div className="workflow-list-empty">
+              <strong>No workflows yet</strong>
+              <p>
+                Create one from the form above. The first run will open the workflow dashboard
+                here and start terminal streaming automatically.
+              </p>
+            </div>
+          ) : (
+            visibleWorkflows.items.map((workflow) => (
+              <button
+                key={workflow.id}
+                className={
+                  workflow.id === activeWorkflowId
+                    ? "workflow-list-item active"
+                    : "workflow-list-item"
+                }
+                onClick={() => setActiveWorkflowId(workflow.id)}
+              >
+                <div>
+                  <strong>{workflow.title}</strong>
+                  <p>{workflow.objective}</p>
+                  <p className="muted-copy">
+                    {workflow.template_key} · {workflow.phase} · attempt {workflow.attempt_counter}
+                  </p>
+                </div>
+                <span className={`badge workflow-${workflow.status}`}>
+                  {workflow.status}
+                </span>
+              </button>
+            ))
+          )}
         </div>
         <PaginationControls
           page={workflowPage}
@@ -789,12 +799,52 @@ export function AgentMode({ providers }: AgentModeProps) {
           </>
         ) : (
           <section className="card agent-empty-state">
-            <span className="eyebrow">Agent mode</span>
-            <h3>Create a workflow to spin up the first team of agents</h3>
-            <p>
-              Planner, QA, and release gating stay local by default. External research or coding
-              providers require approval on non-public work before data can leave the host.
-            </p>
+            <div>
+              <span className="eyebrow">Agent mode</span>
+              <h3>Create a workflow to spin up the first team of agents</h3>
+              <p>
+                Planner, QA, and release gating stay local by default. External research or
+                coding providers require approval on non-public work before data can leave the
+                host.
+              </p>
+            </div>
+
+            <div className="agent-empty-grid">
+              <article className="tooling-block">
+                <div className="artifact-head">
+                  <strong>1. Pick a template</strong>
+                  <span className="chip">guided</span>
+                </div>
+                <p className="muted-copy">
+                  Start with Engineering Pipeline for gated delivery work or Micro for a short
+                  local loop.
+                </p>
+              </article>
+
+              <article className="tooling-block">
+                <div className="artifact-head">
+                  <strong>2. Set sensitivity before launch</strong>
+                  <span className="chip">policy first</span>
+                </div>
+                <p className="muted-copy">
+                  Internal keeps the workflow local-first. Sensitive should be treated as
+                  host-local unless you explicitly approve narrower external context.
+                </p>
+              </article>
+
+              <article className="tooling-block">
+                <div className="artifact-head">
+                  <strong>3. Choose a coordinator</strong>
+                  <span className="chip">
+                    {providers.filter((provider) => provider.installed !== false).length} available
+                  </span>
+                </div>
+                <p className="muted-copy">
+                  Ferrum will open the workflow dashboard here once the first run starts,
+                  including terminals, approvals, artifacts, QA, and rollback.
+                </p>
+              </article>
+            </div>
           </section>
         )}
       </section>
