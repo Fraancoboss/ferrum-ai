@@ -13,6 +13,7 @@ pub struct Config {
     pub workspace_dir: PathBuf,
     pub frontend_dir: PathBuf,
     pub llama_cpp_model_dir: PathBuf,
+    pub ollama_api_base: String,
     pub codex_daily_soft_limit: Option<i64>,
     pub claude_daily_soft_limit: Option<i64>,
 }
@@ -36,6 +37,8 @@ impl Config {
         let llama_cpp_model_dir = env::var("LLAMA_CPP_MODEL_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| crate_dir.join("../../var/models/llama.cpp"));
+        let ollama_api_base =
+            env::var("OLLAMA_API_BASE").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
 
         Ok(Self {
             bind_addr,
@@ -43,6 +46,7 @@ impl Config {
             workspace_dir: normalize_path(workspace_dir),
             frontend_dir: normalize_path(frontend_dir),
             llama_cpp_model_dir: normalize_path(llama_cpp_model_dir),
+            ollama_api_base: ollama_api_base.trim_end_matches('/').to_string(),
             codex_daily_soft_limit: parse_optional_i64("CODEX_DAILY_SOFT_LIMIT_TOKENS")?,
             claude_daily_soft_limit: parse_optional_i64("CLAUDE_DAILY_SOFT_LIMIT_TOKENS")?,
         })

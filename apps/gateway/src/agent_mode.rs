@@ -15,7 +15,7 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::{
-    db::{TerminalSession, WorkflowAgent, WorkflowDetail, WorkflowSummary},
+    db::{ResolvedAgentSkill, TerminalSession, WorkflowAgent, WorkflowDetail, WorkflowSummary},
     process::build_provider_map,
     state::AppState,
 };
@@ -169,6 +169,12 @@ pub async fn initialize_workflow(
         }
     }
 
+    let detail_for_resolution = state
+        .db
+        .get_workflow_detail(workflow.id)
+        .await?
+        .context("workflow detail missing while preparing approvals")?;
+
     for (agent, _, template) in &created {
         if template.approval_required {
             state
@@ -183,11 +189,7 @@ pub async fn initialize_workflow(
                     "provider_egress",
                     Some(template.provider),
                     "External provider requested for a non-public workflow. Approval required before data leaves the host.",
-                    json!({
-                        "role": template.role,
-                        "provider": template.provider.as_str(),
-                        "sensitivity": workflow.sensitivity,
-                    }),
+                    approval_requested_context(workflow, agent, &detail_for_resolution),
                 )
                 .await?;
         }
@@ -365,8 +367,9 @@ async fn run_agent(
         let guard = state.provider_prefs.read().await;
         guard.get(&agent.provider).cloned().unwrap_or_default()
     };
+    let resolved_skills = resolved_skills_for_agent(&detail, agent.id);
 
-    let prompt = build_agent_prompt(&workflow, &agent, &detail, &allowed_mcp);
+    let prompt = build_agent_prompt(&workflow, &agent, &detail, &allowed_mcp, &resolved_skills);
     let cwd = agent
         .worktree_path
         .as_ref()
@@ -399,6 +402,28 @@ async fn run_agent(
     state
         .db
         .append_terminal_output(terminal.id, 0, &format!("$ {}", spec.display()))
+        .await?;
+    state
+        .db
+        .append_workflow_evidence(
+            workflow.id,
+            "agent",
+            Some(agent.id),
+            "skills_resolved",
+            json!({
+                "agent_id": agent.id,
+                "local_prompt_skills": resolved_skills
+                    .iter()
+                    .filter(|skill| skill.applies_to_local_prompt)
+                    .map(skill_preview_payload)
+                    .collect::<Vec<_>>(),
+                "external_context_skills": resolved_skills
+                    .iter()
+                    .filter(|skill| skill.applies_to_external_context)
+                    .map(skill_preview_payload)
+                    .collect::<Vec<_>>(),
+            }),
+        )
         .await?;
     state
         .db
@@ -785,6 +810,7 @@ fn build_agent_prompt(
     agent: &WorkflowAgent,
     detail: &WorkflowDetail,
     allowed_mcp: &[String],
+    resolved_skills: &[ResolvedAgentSkill],
 ) -> String {
     let dependency_context = detail
         .artifacts
@@ -830,29 +856,108 @@ fn build_agent_prompt(
             allowed_mcp.join("\n- ")
         )
     };
+    let local_context = format_local_skill_context(resolved_skills);
 
     if dependency_context.is_empty() {
         format!(
-            "You are the {role} agent in a coordinated workflow.\n\nObjective:\n{objective}\n\nCurrent task:\n{task}\n\nTool policy:\n{tool_registry}\n\nRules:\n- {role_instructions}\n- {sensitivity_instructions}\n- Use only the listed local MCP servers when you need tools.\n- Produce a concise, implementation-ready report.\n",
+            "You are the {role} agent in a coordinated workflow.\n\nObjective:\n{objective}\n\nCurrent task:\n{task}\n\nResolved skill context:\n{local_context}\n\nTool policy:\n{tool_registry}\n\nRules:\n- {role_instructions}\n- {sensitivity_instructions}\n- Use only the listed local MCP servers when you need tools.\n- Produce a concise, implementation-ready report.\n",
             role = agent.role,
             objective = workflow.objective,
             task = agent.current_task,
+            local_context = local_context,
             tool_registry = tool_registry,
             role_instructions = role_instructions,
             sensitivity_instructions = sensitivity_instructions,
         )
     } else {
         format!(
-            "You are the {role} agent in a coordinated workflow.\n\nObjective:\n{objective}\n\nCurrent task:\n{task}\n\nDependency context:\n{dependency_context}\n\nTool policy:\n{tool_registry}\n\nRules:\n- {role_instructions}\n- {sensitivity_instructions}\n- Reuse the dependency context instead of repeating work.\n- Use only the listed local MCP servers when you need tools.\n- Produce a concise, implementation-ready report.\n",
+            "You are the {role} agent in a coordinated workflow.\n\nObjective:\n{objective}\n\nCurrent task:\n{task}\n\nDependency context:\n{dependency_context}\n\nResolved skill context:\n{local_context}\n\nTool policy:\n{tool_registry}\n\nRules:\n- {role_instructions}\n- {sensitivity_instructions}\n- Reuse the dependency context instead of repeating work.\n- Use only the listed local MCP servers when you need tools.\n- Produce a concise, implementation-ready report.\n",
             role = agent.role,
             objective = workflow.objective,
             task = agent.current_task,
             dependency_context = dependency_context,
+            local_context = local_context,
             tool_registry = tool_registry,
             role_instructions = role_instructions,
             sensitivity_instructions = sensitivity_instructions,
         )
     }
+}
+
+fn resolved_skills_for_agent(detail: &WorkflowDetail, agent_id: Uuid) -> Vec<ResolvedAgentSkill> {
+    detail
+        .resolved_skills
+        .iter()
+        .filter(|skill| skill.agent_id == agent_id)
+        .cloned()
+        .collect()
+}
+
+fn format_local_skill_context(skills: &[ResolvedAgentSkill]) -> String {
+    if skills.is_empty() {
+        return "No published agent-context or policy skills resolved for this agent. Use the default runtime instructions.".to_string();
+    }
+
+    let mut sections = Vec::new();
+    for skill in skills.iter().filter(|skill| skill.applies_to_local_prompt) {
+        sections.push(format!(
+            "## {name} v{version} [{skill_type}]\nSource: {source_type}:{source_key}\nSummary: {summary}\n{body}",
+            name = skill.skill_name,
+            version = skill.skill_version,
+            skill_type = skill.skill_type,
+            source_type = skill.source_target_type,
+            source_key = skill.source_target_key,
+            summary = skill.summary,
+            body = resolved_skill_body(skill),
+        ));
+    }
+
+    if sections.is_empty() {
+        "No local prompt skills resolved for this agent.".to_string()
+    } else {
+        sections.join("\n")
+    }
+}
+
+fn resolved_skill_body(skill: &ResolvedAgentSkill) -> String {
+    match skill.body.get("content") {
+        Some(serde_json::Value::String(content)) if !content.trim().is_empty() => {
+            content.trim().to_string()
+        }
+        _ => skill.body.to_string(),
+    }
+}
+
+fn approval_requested_context(
+    workflow: &WorkflowSummary,
+    agent: &WorkflowAgent,
+    detail: &WorkflowDetail,
+) -> serde_json::Value {
+    let external_context = resolved_skills_for_agent(detail, agent.id)
+        .into_iter()
+        .filter(|skill| skill.applies_to_external_context)
+        .map(|skill| skill_preview_payload(&skill))
+        .collect::<Vec<_>>();
+
+    json!({
+        "role": agent.role,
+        "provider": agent.provider.as_str(),
+        "sensitivity": workflow.sensitivity,
+        "external_context_skills": external_context,
+    })
+}
+
+fn skill_preview_payload(skill: &ResolvedAgentSkill) -> serde_json::Value {
+    json!({
+        "skill_id": skill.skill_id,
+        "skill_version_id": skill.skill_version_id,
+        "name": skill.skill_name,
+        "version": skill.skill_version,
+        "skill_type": skill.skill_type,
+        "source_target_type": skill.source_target_type,
+        "source_target_key": skill.source_target_key,
+        "provider_exposure": skill.provider_exposure,
+    })
 }
 
 fn default_acceptance_criteria(role: &str) -> Vec<String> {

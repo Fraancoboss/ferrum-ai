@@ -3,7 +3,7 @@ use std::{convert::Infallible, time::Duration};
 use async_stream::stream;
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
@@ -19,6 +19,13 @@ use crate::{
     agent_mode::{initialize_workflow, spawn_workflow},
     db::{ChatMessage, ChatSummary, DailyUsage},
     error::AppError,
+    local_models::{
+        BrowserHardwareSnapshotInput, CatalogQuery, GgufImportResponse, ImportGgufRequest,
+        InstallCatalogModelRequest, LocalModelCatalogItem, LocalModelInventoryView,
+        ProvidersGovernanceView, ProvidersHardwareView, catalog_view, current_hardware_view,
+        import_gguf_model, persist_browser_snapshot, providers_governance_view,
+        start_ollama_catalog_install,
+    },
     process::{run_provider_diagnostics, spawn_auth, spawn_run},
     state::AppState,
 };
@@ -27,6 +34,12 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/providers", get(list_providers))
+        .route("/providers/hardware", get(get_providers_hardware))
+        .route("/providers/governance", get(get_providers_governance))
+        .route(
+            "/providers/hardware/browser-snapshot",
+            post(save_browser_hardware_snapshot),
+        )
         .route(
             "/providers/{provider}/preferences",
             get(get_provider_preferences).put(update_provider_preferences),
@@ -81,6 +94,29 @@ pub fn router(state: AppState) -> Router {
             "/llama-cpp/models/{model_id}",
             post(set_llama_cpp_model_enabled),
         )
+        .route("/local-models/catalog", get(list_local_model_catalog))
+        .route("/local-models/installed", get(list_local_models_installed))
+        .route("/local-models/install-jobs", get(list_local_model_install_jobs))
+        .route(
+            "/local-models/ollama/install",
+            post(install_ollama_catalog_model),
+        )
+        .route("/local-models/gguf/import", post(import_local_gguf))
+        .route("/skills", get(list_skills).post(create_skill))
+        .route("/skills/{skill_id}", get(get_skill))
+        .route("/skills/{skill_id}/versions", get(list_skill_versions).post(create_skill_version))
+        .route(
+            "/skills/{skill_id}/assignments",
+            get(list_skill_assignments).post(create_skill_assignment),
+        )
+        .route("/skill-assignments/targets", get(skill_assignment_targets))
+        .route("/skill-assignments/{assignment_id}", post(delete_skill_assignment))
+        .route(
+            "/skill-versions/{version_id}/submit-review",
+            post(submit_skill_version_for_review),
+        )
+        .route("/skill-versions/{version_id}/approve", post(approve_skill_version))
+        .route("/skill-versions/{version_id}/publish", post(publish_skill_version))
         .route("/terminals/{terminal_id}/stream", get(stream_terminal))
         .route("/runs/{run_id}/stream", get(stream_run))
         .route("/usage/summary", get(usage_summary))
@@ -114,6 +150,25 @@ async fn list_providers(
     }
     providers.sort_by_key(|provider| provider.provider.as_str().to_string());
     Ok(Json(providers))
+}
+
+async fn get_providers_hardware(
+    State(state): State<AppState>,
+) -> Result<Json<ProvidersHardwareView>, AppError> {
+    Ok(Json(current_hardware_view(&state.db).await?))
+}
+
+async fn get_providers_governance(
+    State(state): State<AppState>,
+) -> Result<Json<ProvidersGovernanceView>, AppError> {
+    Ok(Json(providers_governance_view(&state).await?))
+}
+
+async fn save_browser_hardware_snapshot(
+    State(state): State<AppState>,
+    Json(request): Json<BrowserHardwareSnapshotInput>,
+) -> Result<Json<crate::local_models::DeviceHardwareProfile>, AppError> {
+    Ok(Json(persist_browser_snapshot(&state.db, request).await?))
 }
 
 async fn get_provider_preferences(
@@ -684,6 +739,28 @@ async fn update_agent_provider(
     }
 
     if needs_approval {
+        let refreshed_for_approval = state
+            .db
+            .get_workflow_detail(workflow.id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("workflow {} not found", workflow.id)))?;
+        let external_context_skills = refreshed_for_approval
+            .resolved_skills
+            .iter()
+            .filter(|skill| skill.agent_id == agent_id && skill.applies_to_external_context)
+            .map(|skill| {
+                serde_json::json!({
+                    "skill_id": skill.skill_id,
+                    "skill_version_id": skill.skill_version_id,
+                    "name": skill.skill_name,
+                    "version": skill.skill_version,
+                    "skill_type": skill.skill_type,
+                    "source_target_type": skill.source_target_type,
+                    "source_target_key": skill.source_target_key,
+                    "provider_exposure": skill.provider_exposure,
+                })
+            })
+            .collect::<Vec<_>>();
         state
             .db
             .create_approval_gate(
@@ -694,8 +771,10 @@ async fn update_agent_provider(
                 "Provider reassignment requires approval before external execution.",
                 serde_json::json!({
                     "agent_id": agent_id,
+                    "role": agent.role,
                     "provider": request.provider.as_str(),
                     "workflow_sensitivity": workflow.sensitivity,
+                    "external_context_skills": external_context_skills,
                 }),
             )
             .await?;
@@ -950,6 +1029,289 @@ async fn set_llama_cpp_model_enabled(
     Ok(Json(model))
 }
 
+async fn list_local_model_catalog(
+    Query(query): Query<CatalogQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<LocalModelCatalogItem>>, AppError> {
+    Ok(Json(catalog_view(&state.db, &state, &query).await?))
+}
+
+async fn list_local_models_installed(
+    State(state): State<AppState>,
+) -> Result<Json<LocalModelInventoryView>, AppError> {
+    Ok(Json(crate::local_models::local_inventory(&state).await?))
+}
+
+async fn list_local_model_install_jobs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::db::ModelInstallJob>>, AppError> {
+    Ok(Json(state.db.list_model_install_jobs(25).await?))
+}
+
+async fn install_ollama_catalog_model(
+    State(state): State<AppState>,
+    Json(request): Json<InstallCatalogModelRequest>,
+) -> Result<Json<crate::db::ModelInstallJob>, AppError> {
+    if request.catalog_key.trim().is_empty() {
+        return Err(AppError::BadRequest("catalog_key is required".into()));
+    }
+    Ok(Json(start_ollama_catalog_install(state, request).await.map_err(
+        |error| AppError::BadRequest(error.to_string()),
+    )?))
+}
+
+async fn import_local_gguf(
+    State(state): State<AppState>,
+    Json(request): Json<ImportGgufRequest>,
+) -> Result<Json<GgufImportResponse>, AppError> {
+    Ok(Json(
+        import_gguf_model(&state, request)
+            .await
+            .map_err(|error| AppError::BadRequest(error.to_string()))?,
+    ))
+}
+
+async fn list_skills(
+    Query(query): Query<ListSkillsQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::db::SkillSummary>>, AppError> {
+    let filters = crate::db::SkillListFilters {
+        tenant_key: query.tenant_key.unwrap_or_else(|| "default".to_string()),
+        skill_type: normalize_option_ref(query.skill_type),
+        status: normalize_option_ref(query.status),
+        tag: normalize_option_ref(query.tag),
+        owner: normalize_option_ref(query.owner),
+        sensitivity: normalize_option_ref(query.sensitivity),
+    };
+    Ok(Json(state.db.list_skills(&filters).await?))
+}
+
+async fn create_skill(
+    State(state): State<AppState>,
+    Json(request): Json<CreateSkillRequest>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    if request.slug.trim().is_empty()
+        || request.name.trim().is_empty()
+        || request.description.trim().is_empty()
+        || request.initial_version.summary.trim().is_empty()
+    {
+        return Err(AppError::BadRequest(
+            "slug, name, description, and initial summary are required".into(),
+        ));
+    }
+
+    let skill_type = validate_skill_type(request.skill_type.trim())?;
+    let allowed_sensitivity_levels =
+        validate_sensitivity_levels(request.allowed_sensitivity_levels.unwrap_or_else(|| {
+            vec!["internal".to_string()]
+        }))?;
+    let owner = request
+        .owner
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("local-operator")
+        .to_string();
+
+    let input = crate::db::CreateSkillInput {
+        tenant_key: request
+            .tenant_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string(),
+        slug: request.slug.trim().to_string(),
+        name: request.name.trim().to_string(),
+        skill_type: skill_type.to_string(),
+        description: request.description.trim().to_string(),
+        owner: owner.clone(),
+        visibility: request
+            .visibility
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("private")
+            .to_string(),
+        tags: normalize_string_list(request.tags.unwrap_or_default()),
+        allowed_sensitivity_levels,
+        provider_exposure: request
+            .provider_exposure
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(validate_provider_exposure)
+            .transpose()?
+            .unwrap_or_else(|| default_provider_exposure(skill_type))
+            .to_string(),
+        source_kind: request
+            .source_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("manual")
+            .to_string(),
+        initial_version: to_skill_version_input(request.initial_version, &owner)?,
+    };
+
+    let detail = state
+        .db
+        .create_skill(input)
+        .await
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok(Json(detail))
+}
+
+async fn get_skill(
+    Path(skill_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    let detail = state
+        .db
+        .get_skill_detail(skill_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("skill {skill_id} not found")))?;
+    Ok(Json(detail))
+}
+
+async fn list_skill_versions(
+    Path(skill_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::db::SkillVersion>>, AppError> {
+    Ok(Json(state.db.list_skill_versions(skill_id).await?))
+}
+
+async fn list_skill_assignments(
+    Path(skill_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::db::SkillAssignment>>, AppError> {
+    Ok(Json(state.db.list_skill_assignments(skill_id).await?))
+}
+
+async fn create_skill_version(
+    Path(skill_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(request): Json<CreateSkillVersionRequest>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    if request.summary.trim().is_empty() {
+        return Err(AppError::BadRequest("summary is required".into()));
+    }
+    let input = to_skill_version_input(request, "local-operator")?;
+    let detail = state
+        .db
+        .create_skill_version(skill_id, input)
+        .await
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok(Json(detail))
+}
+
+async fn create_skill_assignment(
+    Path(skill_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(request): Json<CreateSkillAssignmentRequest>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    let target_type = validate_assignment_target_type(request.target_type.trim())?;
+    let target_key = request.target_key.trim();
+    if target_key.is_empty() {
+        return Err(AppError::BadRequest("assignment target_key cannot be empty".into()));
+    }
+    let targets = state.db.skill_assignment_targets().await?;
+    let valid_target = match target_type {
+        "workflow_template" => targets.workflow_templates.iter().any(|item| item == target_key),
+        "agent_role" => targets.agent_roles.iter().any(|item| item == target_key),
+        "provider" => targets.providers.iter().any(|item| item == target_key),
+        _ => false,
+    };
+    if !valid_target {
+        return Err(AppError::BadRequest(format!(
+            "assignment target_key {target_key} is not valid for {target_type}"
+        )));
+    }
+
+    let detail = state
+        .db
+        .create_skill_assignment(
+            skill_id,
+            crate::db::CreateSkillAssignmentInput {
+                skill_version_id: request.skill_version_id,
+                target_type: target_type.to_string(),
+                target_key: target_key.to_string(),
+            },
+        )
+        .await
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok(Json(detail))
+}
+
+async fn delete_skill_assignment(
+    Path(assignment_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    let detail = state
+        .db
+        .delete_skill_assignment(assignment_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("skill assignment {assignment_id} not found")))?;
+    Ok(Json(detail))
+}
+
+async fn skill_assignment_targets(
+    State(state): State<AppState>,
+) -> Result<Json<crate::db::SkillAssignmentTargets>, AppError> {
+    Ok(Json(state.db.skill_assignment_targets().await?))
+}
+
+async fn submit_skill_version_for_review(
+    Path(version_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(request): Json<SkillActionRequest>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    let detail = state
+        .db
+        .submit_skill_version_for_review(
+            version_id,
+            request.actor.as_deref().unwrap_or("local-operator"),
+            request.comment.as_deref(),
+        )
+        .await
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok(Json(detail))
+}
+
+async fn approve_skill_version(
+    Path(version_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(request): Json<SkillActionRequest>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    let detail = state
+        .db
+        .approve_skill_version(
+            version_id,
+            request.actor.as_deref().unwrap_or("local-operator"),
+            request.comment.as_deref(),
+        )
+        .await
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok(Json(detail))
+}
+
+async fn publish_skill_version(
+    Path(version_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(request): Json<SkillActionRequest>,
+) -> Result<Json<crate::db::SkillDetail>, AppError> {
+    let detail = state
+        .db
+        .publish_skill_version(
+            version_id,
+            request.actor.as_deref().unwrap_or("local-operator"),
+            request.comment.as_deref(),
+        )
+        .await
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok(Json(detail))
+}
+
 fn stream_events(
     stored: Vec<orchestrator_core::NormalizedEvent>,
     receiver: tokio::sync::broadcast::Receiver<orchestrator_core::NormalizedEvent>,
@@ -1198,6 +1560,104 @@ fn normalize_option(value: String) -> Option<String> {
     (!trimmed.is_empty()).then_some(trimmed.to_string())
 }
 
+fn normalize_option_ref(value: Option<String>) -> Option<String> {
+    value.and_then(normalize_option)
+}
+
+fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    let mut normalized = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn validate_skill_type(value: &str) -> Result<&str, AppError> {
+    match value {
+        "library" | "agent-context" | "cli" | "provider" | "policy" => Ok(value),
+        other => Err(AppError::BadRequest(format!("invalid skill_type {other}"))),
+    }
+}
+
+fn validate_provider_exposure(value: &str) -> Result<&str, AppError> {
+    match value {
+        "local_only" | "agent_context_only" | "provider_allowed" => Ok(value),
+        other => Err(AppError::BadRequest(format!(
+            "invalid provider_exposure {other}"
+        ))),
+    }
+}
+
+fn validate_assignment_target_type(value: &str) -> Result<&str, AppError> {
+    match value {
+        "workflow_template" | "agent_role" | "provider" => Ok(value),
+        other => Err(AppError::BadRequest(format!(
+            "invalid assignment target_type {other}"
+        ))),
+    }
+}
+
+fn default_provider_exposure(skill_type: &str) -> &'static str {
+    match skill_type {
+        "agent-context" => "agent_context_only",
+        "provider" => "provider_allowed",
+        _ => "local_only",
+    }
+}
+
+fn validate_sensitivity_levels(values: Vec<String>) -> Result<Vec<String>, AppError> {
+    let normalized = normalize_string_list(values);
+    if normalized.is_empty() {
+        return Err(AppError::BadRequest(
+            "allowed_sensitivity_levels cannot be empty".into(),
+        ));
+    }
+
+    for value in &normalized {
+        match value.as_str() {
+            "public" | "internal" | "sensitive" => {}
+            other => {
+                return Err(AppError::BadRequest(format!(
+                    "invalid allowed_sensitivity_levels value {other}"
+                )));
+            }
+        }
+    }
+
+    Ok(normalized)
+}
+
+fn to_skill_version_input(
+    request: CreateSkillVersionRequest,
+    default_actor: &str,
+) -> Result<crate::db::CreateSkillVersionInput, AppError> {
+    if request.summary.trim().is_empty() {
+        return Err(AppError::BadRequest("summary is required".into()));
+    }
+
+    let created_by = request
+        .created_by
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_actor)
+        .to_string();
+
+    Ok(crate::db::CreateSkillVersionInput {
+        summary: request.summary.trim().to_string(),
+        body: request.body,
+        examples: normalize_string_list(request.examples.unwrap_or_default()),
+        constraints: normalize_string_list(request.constraints.unwrap_or_default()),
+        review_notes: request.review_notes.and_then(normalize_option),
+        created_by,
+        source_ref: request.source_ref.and_then(normalize_option),
+        dataset_pack_key: request.dataset_pack_key.and_then(normalize_option),
+    })
+}
+
 fn resolve_model_path(state: &AppState, input: &str) -> std::path::PathBuf {
     let candidate = std::path::PathBuf::from(input);
     if candidate.is_absolute() {
@@ -1239,4 +1699,55 @@ pub struct UpdateAgentProviderRequest {
 #[derive(Debug, Deserialize)]
 pub struct EscalateAgentRequest {
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListSkillsQuery {
+    pub tenant_key: Option<String>,
+    pub skill_type: Option<String>,
+    pub status: Option<String>,
+    pub tag: Option<String>,
+    pub owner: Option<String>,
+    pub sensitivity: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillVersionRequest {
+    pub summary: String,
+    pub body: serde_json::Value,
+    pub examples: Option<Vec<String>>,
+    pub constraints: Option<Vec<String>>,
+    pub review_notes: Option<String>,
+    pub created_by: Option<String>,
+    pub source_ref: Option<String>,
+    pub dataset_pack_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillRequest {
+    pub tenant_key: Option<String>,
+    pub slug: String,
+    pub name: String,
+    pub skill_type: String,
+    pub description: String,
+    pub owner: Option<String>,
+    pub visibility: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub allowed_sensitivity_levels: Option<Vec<String>>,
+    pub provider_exposure: Option<String>,
+    pub source_kind: Option<String>,
+    pub initial_version: CreateSkillVersionRequest,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillAssignmentRequest {
+    pub skill_version_id: Uuid,
+    pub target_type: String,
+    pub target_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkillActionRequest {
+    pub actor: Option<String>,
+    pub comment: Option<String>,
 }

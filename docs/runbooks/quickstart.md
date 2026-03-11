@@ -2,6 +2,14 @@
 
 This runbook covers the full local setup for Ferrum AI MVP v1, from cloning the repository to opening the frontend-lab in a browser.
 
+Related short runbooks:
+
+- [local-startup](C:/Users/fraan/proyectos/ferrum-ai/docs/runbooks/local-startup.md)
+- [ollama-host-setup](C:/Users/fraan/proyectos/ferrum-ai/docs/runbooks/ollama-host-setup.md)
+- [providers-governance-check](C:/Users/fraan/proyectos/ferrum-ai/docs/runbooks/providers-governance-check.md)
+- [gguf-import](C:/Users/fraan/proyectos/ferrum-ai/docs/runbooks/gguf-import.md)
+- [recovery-basics](C:/Users/fraan/proyectos/ferrum-ai/docs/runbooks/recovery-basics.md)
+
 ## 1. Clone the repository
 
 ### PowerShell

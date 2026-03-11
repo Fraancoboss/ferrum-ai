@@ -10,6 +10,9 @@ import {
 
 import { AgentMode } from "./AgentMode";
 import { api } from "./api";
+import { McpRegistryScreen } from "./McpRegistryScreen";
+import { ProvidersControlPlane } from "./ProvidersControlPlane";
+import { SkillsScreen } from "./SkillsScreen";
 import type {
   AuthLaunchResponse,
   ChatMessage,
@@ -22,7 +25,7 @@ import type {
   UsageSummary,
 } from "./types";
 
-type Page = "providers" | "agents" | "chats" | "chat";
+type Page = "providers" | "agents" | "skills" | "mcps" | "chats" | "chat";
 
 type MarkdownBlock =
   | { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
@@ -181,21 +184,6 @@ export function App() {
       } satisfies ChatMessage,
     ];
   }, [activeChatId, messages, pendingText, runUsage, sending]);
-
-  const todayUsage = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    return usage.daily
-      .filter((row) => row.day === today)
-      .reduce(
-        (acc, row) => {
-          acc.input += row.input_tokens;
-          acc.output += row.output_tokens;
-          acc.total += row.total_tokens;
-          return acc;
-        },
-        { input: 0, output: 0, total: 0 },
-      );
-  }, [usage.daily]);
 
   const authenticatedProviders = useMemo(
     () =>
@@ -486,6 +474,22 @@ export function App() {
             </button>
 
             <button
+              className={page === "skills" ? "nav-item active" : "nav-item"}
+              onClick={() => setPage("skills")}
+            >
+              <IconSkills />
+              <span className="nav-label">Skills</span>
+            </button>
+
+            <button
+              className={page === "mcps" ? "nav-item active" : "nav-item"}
+              onClick={() => setPage("mcps")}
+            >
+              <IconMcp />
+              <span className="nav-label">MCPs</span>
+            </button>
+
+            <button
               className={page === "chats" ? "nav-item active" : "nav-item"}
               onClick={() => setPage("chats")}
             >
@@ -530,6 +534,10 @@ export function App() {
                 ? "Provider setup"
                 : page === "agents"
                   ? "Workflow orchestration"
+                  : page === "skills"
+                    ? "Shared expert context"
+                    : page === "mcps"
+                      ? "Shared tooling"
                 : page === "chats"
                   ? "Conversation index"
                   : "Active conversation"}
@@ -539,15 +547,23 @@ export function App() {
                 ? "Providers"
                 : page === "agents"
                   ? "Agent Mode"
+                  : page === "skills"
+                    ? "Skills"
+                    : page === "mcps"
+                      ? "MCPs"
                 : page === "chats"
                   ? "Chats"
                   : activeChat?.title ?? "Chat"}
             </h2>
             <p>
               {page === "providers"
-                ? "Choose models, tune effort, and monitor auth without breaking flow."
+                ? "Operate closed providers and local model policy from one secure control plane."
                 : page === "agents"
-                  ? "Run a local-first coordinator with multiple background terminals and approval gates."
+                  ? "Run coordinated workflows without mixing them with shared tooling management."
+                  : page === "skills"
+                    ? "Prepare reusable expert context that future agents and providers can share."
+                    : page === "mcps"
+                      ? "Manage local MCP connectivity without mixing it with model distribution."
                 : page === "chats"
                   ? "Filter by provider, model, or keyword and open any conversation."
                   : activeChat
@@ -572,19 +588,22 @@ export function App() {
         </header>
 
         {page === "providers" ? (
-          <ProvidersScreen
+          <ProvidersControlPlane
             providers={providers}
             llamaModels={llamaModels}
             usage={usage}
-            todayUsage={todayUsage}
             authenticatedProviders={authenticatedProviders}
-            onRefresh={async () => Promise.all([reloadProviders(), reloadUsage()])}
+            onRefresh={async () => Promise.all([reloadProviders(), reloadUsage(), reloadLlamaModels()])}
             onAuth={handleProviderAuth}
             onSave={saveProviderPreferences}
           />
         ) : null}
 
         {page === "agents" ? <AgentMode providers={providers} /> : null}
+
+        {page === "skills" ? <SkillsScreen /> : null}
+
+        {page === "mcps" ? <McpRegistryScreen providers={providers} /> : null}
 
         {page === "chats" ? (
           <ChatsScreen
@@ -652,7 +671,7 @@ export function App() {
   );
 }
 
-function ProvidersScreen(_: {
+export function ProvidersScreenLegacy(_: {
   providers: ProviderView[];
   llamaModels: LlamaCppModel[];
   usage: UsageSummary;
@@ -1315,6 +1334,30 @@ function IconAgents() {
       <path d="M5 12h6" />
       <path d="M5 18h10" />
       <path d="M16 10l3 2-3 2" />
+    </svg>
+  );
+}
+
+function IconSkills() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 5h12v14l-6-3.8L6 19z" />
+      <path d="M9 8h6" />
+      <path d="M9 11h4" />
+    </svg>
+  );
+}
+
+function IconMcp() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 7h2v2H7z" />
+      <path d="M15 7h2v2h-2z" />
+      <path d="M7 15h2v2H7z" />
+      <path d="M9 8h6" />
+      <path d="M8 9v6" />
+      <path d="M9 16h6" />
+      <path d="M16 8v8" />
     </svg>
   );
 }

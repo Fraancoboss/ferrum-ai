@@ -14,10 +14,12 @@ chrono.workspace = true
 futures.workspace = true
 orchestrator-core = { path = "../../crates/orchestrator-core" }
 portable-pty.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
+sysinfo.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

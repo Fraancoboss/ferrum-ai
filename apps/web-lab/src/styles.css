@@ -33,7 +33,8 @@ body {
     radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.18), transparent 28%),
     radial-gradient(circle at 100% 20%, rgba(34, 197, 94, 0.08), transparent 24%),
     linear-gradient(180deg, #08111f 0%, #09131f 55%, #0a1420 100%);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 button,
@@ -83,11 +84,11 @@ textarea {
 
 .app {
   --sidebar-width: 256px;
-  height: 100vh;
+  min-height: 100vh;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   transition: grid-template-columns 0.28s ease;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .app.sidebar-collapsed {
@@ -282,12 +283,13 @@ textarea {
 
 .main {
   min-width: 0;
-  height: 100vh;
+  min-height: 100vh;
   padding: 16px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: start;
   gap: 14px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .topbar,
@@ -348,9 +350,9 @@ textarea {
 .providers-screen {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   gap: 14px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .providers-hero {
@@ -405,6 +407,107 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.providers-control-plane,
+.providers-marketplace,
+.providers-local-layout,
+.providers-governance-layout {
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.providers-local-layout,
+.providers-marketplace,
+.providers-governance-layout {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.providers-local-panel,
+.providers-marketplace-panel,
+.providers-hardware-panel,
+.providers-governance-panel {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.providers-hardware-panel,
+.providers-marketplace-panel:last-child,
+.providers-local-panel:last-child,
+.providers-governance-panel:first-child {
+  grid-column: 1 / -1;
+}
+
+.providers-governance-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.governance-provider-item {
+  align-items: stretch;
+}
+
+.providers-hero-stats-extended {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.providers-section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.providers-hardware-grid,
+.providers-market-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.providers-hardware-metrics,
+.providers-catalog-metrics,
+.providers-inventory-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.provider-grid-single {
+  grid-template-columns: 1fr;
+}
+
+.provider-card-soft {
+  background: rgba(8, 14, 27, 0.74);
+}
+
+.install-job-item {
+  align-items: center;
+}
+
+.install-job-progress {
+  width: 180px;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.7), rgba(59, 130, 246, 0.9));
+}
+
+.objective-filter-row {
+  min-width: 220px;
 }
 
 .agents-screen {
@@ -477,6 +580,13 @@ textarea {
   border-color: rgba(59, 130, 246, 0.5);
   background: rgba(17, 31, 58, 0.92);
   box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+}
+
+.template-role-strip,
+.provider-pill-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .workflow-list {
@@ -564,7 +674,7 @@ textarea {
 
 .agents-hero-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 8px;
 }
 
@@ -702,6 +812,233 @@ textarea {
   color: #fb7185;
 }
 
+.mcp-screen,
+.skills-screen {
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+  overflow: visible;
+}
+
+.tooling-header,
+.skills-hero {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.tooling-layout,
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tooling-card,
+.skills-card {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.skills-notice {
+  margin: 0;
+  color: #93c5fd;
+}
+
+.skills-workbench {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(320px, 1fr) minmax(420px, 1.25fr);
+  gap: 12px;
+}
+
+.skills-sidebar-panel,
+.skills-list-panel,
+.skills-detail-panel {
+  min-height: 0;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  overflow: hidden;
+}
+
+.skills-list-panel,
+.skills-detail-panel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.skills-sidebar-panel {
+  overflow-y: auto;
+}
+
+.skills-filter-grid,
+.skills-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.skills-form-row-wide {
+  grid-column: 1 / -1;
+}
+
+.skills-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.skills-assignment-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.skill-list {
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.skill-list-item {
+  width: 100%;
+  text-align: left;
+}
+
+.skills-list-meta {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  flex: none;
+}
+
+.skills-detail-columns {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 12px;
+}
+
+.skills-version-item,
+.review-timeline-item {
+  display: grid;
+  gap: 10px;
+}
+
+.skills-body-preview {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(4, 9, 18, 0.88);
+  color: #d8e8ff;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 0.82rem;
+}
+
+.review-timeline {
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.agent-skill-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-skill-tags {
+  margin-top: 10px;
+}
+
+.badge-status-draft {
+  color: #fcd34d;
+  border-color: rgba(250, 204, 21, 0.28);
+}
+
+.badge-status-review {
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+.badge-status-approved {
+  color: #c4b5fd;
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
+.badge-status-published {
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+.badge-status-retired,
+.badge-status-unknown {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+.tooling-card-wide {
+  grid-column: 1 / -1;
+}
+
+.tooling-list-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tooling-list-block {
+  display: grid;
+  gap: 10px;
+}
+
+.registry-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(8, 14, 27, 0.85);
+}
+
+.provider-pill {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(8, 14, 27, 0.84);
+}
+
+.provider-pill-active {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(17, 31, 58, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+}
+
+.section-copy {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.stack-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .provider-card {
   display: grid;
   gap: 12px;
@@ -831,7 +1168,7 @@ textarea {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 14px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .filters {
@@ -1390,6 +1727,16 @@ label {
     grid-template-columns: 1fr;
   }
 
+  .providers-local-layout,
+  .providers-governance-layout,
+  .providers-marketplace,
+  .providers-hardware-grid,
+  .providers-market-grid,
+  .providers-hero-stats-extended,
+  .providers-governance-summary {
+    grid-template-columns: 1fr;
+  }
+
   .filters {
     grid-template-columns: 1fr;
   }
@@ -1405,6 +1752,11 @@ label {
   }
 
   .agents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .skills-workbench,
+  .skills-detail-columns {
     grid-template-columns: 1fr;
   }
 }
@@ -1441,6 +1793,17 @@ label {
   }
 
   .workflow-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tooling-layout,
+  .skills-grid,
+  .tooling-list-grid,
+  .providers-inventory-grid,
+  .skills-filter-grid,
+  .skills-form-grid,
+  .skills-assignment-form,
+  .skills-workbench {
     grid-template-columns: 1fr;
   }
 }

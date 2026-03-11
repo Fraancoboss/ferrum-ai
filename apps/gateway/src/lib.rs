@@ -1,7 +1,9 @@
 pub mod agent_mode;
 pub mod config;
+pub mod curated_skills;
 pub mod db;
 pub mod error;
+pub mod local_models;
 pub mod process;
 pub mod routes;
 pub mod state;
@@ -17,6 +19,7 @@ use tower_http::{
 
 use crate::{
     config::Config,
+    curated_skills::ensure_curated_skill_catalog,
     db::Database,
     process::build_provider_map,
     state::{AppState, EventHub, default_provider_prefs},
@@ -26,6 +29,8 @@ pub async fn build_state(config: Config) -> anyhow::Result<AppState> {
     let config = Arc::new(config);
     let db = Database::connect(&config.database_url).await?;
     db.migrate().await?;
+    db.ensure_default_workflow_templates().await?;
+    ensure_curated_skill_catalog(&db).await?;
 
     Ok(AppState {
         config,

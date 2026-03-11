@@ -1187,18 +1187,29 @@ impl Database {
         let Some(workflow) = self.get_workflow(workflow_id).await? else {
             return Ok(None);
         };
+        let agents = self.list_workflow_agents(workflow_id).await?;
+        let terminals = self.list_terminal_sessions(workflow_id).await?;
+        let approvals = self.list_workflow_approvals(workflow_id).await?;
+        let artifacts = self.list_workflow_artifacts(workflow_id).await?;
+        let handoffs = self.list_workflow_handoffs(workflow_id).await?;
+        let qa_verdicts = self.list_workflow_qa_verdicts(workflow_id).await?;
+        let release_verdicts = self.list_workflow_release_verdicts(workflow_id).await?;
+        let evidence = self.list_workflow_evidence_records(workflow_id).await?;
+        let snapshots = self.list_workflow_snapshots(workflow_id).await?;
+        let resolved_skills = self.resolve_workflow_skills(&workflow, &agents).await?;
 
         Ok(Some(WorkflowDetail {
             workflow,
-            agents: self.list_workflow_agents(workflow_id).await?,
-            terminals: self.list_terminal_sessions(workflow_id).await?,
-            approvals: self.list_workflow_approvals(workflow_id).await?,
-            artifacts: self.list_workflow_artifacts(workflow_id).await?,
-            handoffs: self.list_workflow_handoffs(workflow_id).await?,
-            qa_verdicts: self.list_workflow_qa_verdicts(workflow_id).await?,
-            release_verdicts: self.list_workflow_release_verdicts(workflow_id).await?,
-            evidence: self.list_workflow_evidence_records(workflow_id).await?,
-            snapshots: self.list_workflow_snapshots(workflow_id).await?,
+            agents,
+            terminals,
+            approvals,
+            artifacts,
+            handoffs,
+            qa_verdicts,
+            release_verdicts,
+            evidence,
+            snapshots,
+            resolved_skills,
         }))
     }
 
@@ -1831,6 +1842,917 @@ impl Database {
         Ok(models.into_iter().find(|model| model.id == model_id))
     }
 
+    pub async fn upsert_hardware_profile(
+        &self,
+        profile_kind: &str,
+        source_key: &str,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<HardwareProfile> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO hardware_profiles (id, profile_kind, source_key, payload)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (profile_kind, source_key) DO UPDATE
+            SET payload = EXCLUDED.payload,
+                updated_at = now()
+            "#,
+        )
+        .bind(id)
+        .bind(profile_kind)
+        .bind(source_key)
+        .bind(payload)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_hardware_profile(profile_kind, source_key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("hardware profile {profile_kind}/{source_key} missing after upsert"))
+    }
+
+    pub async fn get_hardware_profile(
+        &self,
+        profile_kind: &str,
+        source_key: &str,
+    ) -> anyhow::Result<Option<HardwareProfile>> {
+        let row = sqlx::query_as::<_, HardwareProfileRow>(
+            r#"
+            SELECT id, profile_kind, source_key, payload, created_at, updated_at
+            FROM hardware_profiles
+            WHERE profile_kind = $1 AND source_key = $2
+            "#,
+        )
+        .bind(profile_kind)
+        .bind(source_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn list_model_install_jobs(&self, limit: i64) -> anyhow::Result<Vec<ModelInstallJob>> {
+        let rows = sqlx::query_as::<_, ModelInstallJobRow>(
+            r#"
+            SELECT
+                id,
+                actor_name,
+                source_app,
+                source_channel,
+                runtime_target,
+                catalog_key,
+                source_ref,
+                checksum_expected,
+                checksum_actual,
+                destination_ref,
+                status,
+                progress_percent,
+                detail,
+                error_text,
+                created_at,
+                updated_at,
+                finished_at
+            FROM model_install_jobs
+            ORDER BY created_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn create_model_install_job(
+        &self,
+        input: CreateModelInstallJobInput,
+    ) -> anyhow::Result<ModelInstallJob> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO model_install_jobs (
+                id,
+                actor_name,
+                source_app,
+                source_channel,
+                runtime_target,
+                catalog_key,
+                source_ref,
+                checksum_expected,
+                checksum_actual,
+                destination_ref,
+                status,
+                progress_percent,
+                detail,
+                error_text,
+                finished_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL, $9, $10, $11, NULL, NULL)
+            "#,
+        )
+        .bind(id)
+        .bind(&input.actor_name)
+        .bind(&input.source_app)
+        .bind(&input.source_channel)
+        .bind(&input.runtime_target)
+        .bind(input.catalog_key.as_deref())
+        .bind(input.source_ref.as_deref())
+        .bind(input.checksum_expected.as_deref())
+        .bind(&input.status)
+        .bind(input.progress_percent)
+        .bind(input.detail.as_deref())
+        .execute(&self.pool)
+        .await?;
+
+        self.get_model_install_job(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("install job {id} missing after insert"))
+    }
+
+    pub async fn update_model_install_job(
+        &self,
+        job_id: Uuid,
+        input: UpdateModelInstallJobInput,
+    ) -> anyhow::Result<Option<ModelInstallJob>> {
+        sqlx::query(
+            r#"
+            UPDATE model_install_jobs
+            SET status = $2,
+                progress_percent = $3,
+                detail = $4,
+                checksum_actual = COALESCE($5, checksum_actual),
+                destination_ref = COALESCE($6, destination_ref),
+                error_text = $7,
+                updated_at = now(),
+                finished_at = CASE
+                    WHEN $2 IN ('completed', 'failed', 'blocked')
+                        THEN COALESCE(finished_at, now())
+                    ELSE NULL
+                END
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .bind(&input.status)
+        .bind(input.progress_percent)
+        .bind(input.detail.as_deref())
+        .bind(input.checksum_actual.as_deref())
+        .bind(input.destination_ref.as_deref())
+        .bind(input.error_text.as_deref())
+        .execute(&self.pool)
+        .await?;
+
+        self.get_model_install_job(job_id).await
+    }
+
+    pub async fn get_model_install_job(
+        &self,
+        job_id: Uuid,
+    ) -> anyhow::Result<Option<ModelInstallJob>> {
+        let row = sqlx::query_as::<_, ModelInstallJobRow>(
+            r#"
+            SELECT
+                id,
+                actor_name,
+                source_app,
+                source_channel,
+                runtime_target,
+                catalog_key,
+                source_ref,
+                checksum_expected,
+                checksum_actual,
+                destination_ref,
+                status,
+                progress_percent,
+                detail,
+                error_text,
+                created_at,
+                updated_at,
+                finished_at
+            FROM model_install_jobs
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn find_skill_id_by_slug(
+        &self,
+        tenant_key: &str,
+        slug: &str,
+    ) -> anyhow::Result<Option<Uuid>> {
+        let skill_id = sqlx::query_scalar::<_, Option<Uuid>>(
+            r#"
+            SELECT id
+            FROM skills
+            WHERE tenant_key = $1 AND slug = $2
+            "#,
+        )
+        .bind(tenant_key)
+        .bind(slug)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        Ok(skill_id)
+    }
+
+    pub async fn list_skills(&self, filters: &SkillListFilters) -> anyhow::Result<Vec<SkillSummary>> {
+        let rows = sqlx::query_as::<_, SkillSummaryRow>(
+            r#"
+            SELECT
+                s.id,
+                s.tenant_key,
+                s.slug,
+                s.name,
+                s.skill_type,
+                s.description,
+                s.status,
+                s.owner,
+                s.visibility,
+                s.tags,
+                s.allowed_sensitivity_levels,
+                s.provider_exposure,
+                s.source_kind,
+                COALESCE(assignments.assignment_count, 0) AS assignment_count,
+                s.created_at,
+                s.updated_at,
+                latest.version AS latest_version,
+                latest.status AS latest_version_status,
+                latest.summary AS latest_version_summary,
+                latest.updated_at AS latest_version_updated_at
+            FROM skills s
+            LEFT JOIN LATERAL (
+                SELECT version, status, summary, updated_at
+                FROM skill_versions
+                WHERE skill_id = s.id
+                ORDER BY version DESC
+                LIMIT 1
+            ) latest ON true
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::BIGINT AS assignment_count
+                FROM skill_assignments sa
+                INNER JOIN skill_versions sv ON sv.id = sa.skill_version_id
+                WHERE sv.skill_id = s.id
+            ) assignments ON true
+            WHERE s.tenant_key = $1
+              AND ($2::text IS NULL OR s.skill_type = $2)
+              AND ($3::text IS NULL OR s.status = $3)
+              AND ($4::text IS NULL OR s.owner = $4)
+              AND ($5::text IS NULL OR s.tags ? $5)
+              AND ($6::text IS NULL OR s.allowed_sensitivity_levels ? $6)
+            ORDER BY s.updated_at DESC, s.name ASC
+            "#,
+        )
+        .bind(&filters.tenant_key)
+        .bind(filters.skill_type.as_deref())
+        .bind(filters.status.as_deref())
+        .bind(filters.owner.as_deref())
+        .bind(filters.tag.as_deref())
+        .bind(filters.sensitivity.as_deref())
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(SkillSummary::try_from).collect()
+    }
+
+    pub async fn get_skill_detail(&self, skill_id: Uuid) -> anyhow::Result<Option<SkillDetail>> {
+        let row = sqlx::query_as::<_, SkillSummaryRow>(
+            r#"
+            SELECT
+                s.id,
+                s.tenant_key,
+                s.slug,
+                s.name,
+                s.skill_type,
+                s.description,
+                s.status,
+                s.owner,
+                s.visibility,
+                s.tags,
+                s.allowed_sensitivity_levels,
+                s.provider_exposure,
+                s.source_kind,
+                COALESCE(assignments.assignment_count, 0) AS assignment_count,
+                s.created_at,
+                s.updated_at,
+                latest.version AS latest_version,
+                latest.status AS latest_version_status,
+                latest.summary AS latest_version_summary,
+                latest.updated_at AS latest_version_updated_at
+            FROM skills s
+            LEFT JOIN LATERAL (
+                SELECT version, status, summary, updated_at
+                FROM skill_versions
+                WHERE skill_id = s.id
+                ORDER BY version DESC
+                LIMIT 1
+            ) latest ON true
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::BIGINT AS assignment_count
+                FROM skill_assignments sa
+                INNER JOIN skill_versions sv ON sv.id = sa.skill_version_id
+                WHERE sv.skill_id = s.id
+            ) assignments ON true
+            WHERE s.id = $1
+            "#,
+        )
+        .bind(skill_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(summary_row) = row else {
+            return Ok(None);
+        };
+
+        let skill = SkillSummary::try_from(summary_row)?;
+        let versions = self.list_skill_versions(skill_id).await?;
+        let reviews = self.list_skill_reviews(skill_id).await?;
+        let assignments = self.list_skill_assignments(skill_id).await?;
+        Ok(Some(SkillDetail {
+            skill,
+            versions,
+            reviews,
+            assignments,
+        }))
+    }
+
+    pub async fn create_skill(&self, input: CreateSkillInput) -> anyhow::Result<SkillDetail> {
+        let skill_id = Uuid::new_v4();
+        let version_id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO skills (
+                id, tenant_key, slug, name, skill_type, description, status, owner, visibility,
+                tags, allowed_sensitivity_levels, provider_exposure, source_kind
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11, $12)
+            "#,
+        )
+        .bind(skill_id)
+        .bind(&input.tenant_key)
+        .bind(&input.slug)
+        .bind(&input.name)
+        .bind(&input.skill_type)
+        .bind(&input.description)
+        .bind(&input.owner)
+        .bind(&input.visibility)
+        .bind(serde_json::to_value(&input.tags)?)
+        .bind(serde_json::to_value(&input.allowed_sensitivity_levels)?)
+        .bind(&input.provider_exposure)
+        .bind(&input.source_kind)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO skill_versions (
+                id, skill_id, version, status, body, summary, examples, constraints, review_notes,
+                created_by, source_ref, dataset_pack_key
+            )
+            VALUES ($1, $2, 1, 'draft', $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(version_id)
+        .bind(skill_id)
+        .bind(&input.initial_version.body)
+        .bind(&input.initial_version.summary)
+        .bind(serde_json::to_value(&input.initial_version.examples)?)
+        .bind(serde_json::to_value(&input.initial_version.constraints)?)
+        .bind(input.initial_version.review_notes.as_deref())
+        .bind(&input.initial_version.created_by)
+        .bind(input.initial_version.source_ref.as_deref())
+        .bind(input.initial_version.dataset_pack_key.as_deref())
+        .execute(&mut *tx)
+        .await?;
+
+        self.insert_skill_review_tx(
+            &mut tx,
+            version_id,
+            "draft_created",
+            "author",
+            &input.initial_version.created_by,
+            Some("Initial draft created"),
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        self.get_skill_detail(skill_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("skill {skill_id} was not stored"))
+    }
+
+    pub async fn list_skill_versions(&self, skill_id: Uuid) -> anyhow::Result<Vec<SkillVersion>> {
+        let rows = sqlx::query_as::<_, SkillVersionRow>(
+            r#"
+            SELECT
+                id, skill_id, version, status, body, summary, examples, constraints, review_notes,
+                created_by, approved_by, published_by, source_ref, dataset_pack_key, created_at,
+                updated_at, approved_at, published_at
+            FROM skill_versions
+            WHERE skill_id = $1
+            ORDER BY version DESC
+            "#,
+        )
+        .bind(skill_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(SkillVersion::try_from).collect()
+    }
+
+    pub async fn create_skill_version(
+        &self,
+        skill_id: Uuid,
+        input: CreateSkillVersionInput,
+    ) -> anyhow::Result<SkillDetail> {
+        let next_version = sqlx::query_scalar::<_, Option<i32>>(
+            r#"
+            SELECT MAX(version)
+            FROM skill_versions
+            WHERE skill_id = $1
+            "#,
+        )
+        .bind(skill_id)
+        .fetch_one(&self.pool)
+        .await?
+        .unwrap_or(0)
+            + 1;
+
+        let version_id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO skill_versions (
+                id, skill_id, version, status, body, summary, examples, constraints, review_notes,
+                created_by, source_ref, dataset_pack_key
+            )
+            VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+        )
+        .bind(version_id)
+        .bind(skill_id)
+        .bind(next_version)
+        .bind(&input.body)
+        .bind(&input.summary)
+        .bind(serde_json::to_value(&input.examples)?)
+        .bind(serde_json::to_value(&input.constraints)?)
+        .bind(input.review_notes.as_deref())
+        .bind(&input.created_by)
+        .bind(input.source_ref.as_deref())
+        .bind(input.dataset_pack_key.as_deref())
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("UPDATE skills SET updated_at = now() WHERE id = $1")
+            .bind(skill_id)
+            .execute(&mut *tx)
+            .await?;
+
+        self.insert_skill_review_tx(
+            &mut tx,
+            version_id,
+            "draft_created",
+            "author",
+            &input.created_by,
+            Some("New draft version created"),
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        self.get_skill_detail(skill_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("skill {skill_id} was not found after version creation"))
+    }
+
+    pub async fn submit_skill_version_for_review(
+        &self,
+        version_id: Uuid,
+        actor_name: &str,
+        comment: Option<&str>,
+    ) -> anyhow::Result<SkillDetail> {
+        let (skill_id, status): (Uuid, String) = sqlx::query_as(
+            "SELECT skill_id, status FROM skill_versions WHERE id = $1",
+        )
+        .bind(version_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("skill version {version_id} not found"))?;
+
+        if status != "draft" {
+            anyhow::bail!("only draft versions can be submitted for review");
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            r#"
+            UPDATE skill_versions
+            SET status = 'review',
+                updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(version_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE skills SET updated_at = now() WHERE id = $1")
+            .bind(skill_id)
+            .execute(&mut *tx)
+            .await?;
+        self.insert_skill_review_tx(
+            &mut tx,
+            version_id,
+            "submitted_for_review",
+            "author",
+            actor_name,
+            comment,
+        )
+        .await?;
+        tx.commit().await?;
+
+        self.get_skill_detail(skill_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("skill {skill_id} not found after review submission"))
+    }
+
+    pub async fn approve_skill_version(
+        &self,
+        version_id: Uuid,
+        actor_name: &str,
+        comment: Option<&str>,
+    ) -> anyhow::Result<SkillDetail> {
+        let (skill_id, status): (Uuid, String) = sqlx::query_as(
+            "SELECT skill_id, status FROM skill_versions WHERE id = $1",
+        )
+        .bind(version_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("skill version {version_id} not found"))?;
+
+        if status != "review" {
+            anyhow::bail!("only review versions can be approved");
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            r#"
+            UPDATE skill_versions
+            SET status = 'approved',
+                approved_by = $2,
+                approved_at = now(),
+                updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(version_id)
+        .bind(actor_name)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE skills SET updated_at = now() WHERE id = $1")
+            .bind(skill_id)
+            .execute(&mut *tx)
+            .await?;
+        self.insert_skill_review_tx(
+            &mut tx,
+            version_id,
+            "approved",
+            "reviewer",
+            actor_name,
+            comment,
+        )
+        .await?;
+        tx.commit().await?;
+
+        self.get_skill_detail(skill_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("skill {skill_id} not found after approval"))
+    }
+
+    pub async fn publish_skill_version(
+        &self,
+        version_id: Uuid,
+        actor_name: &str,
+        comment: Option<&str>,
+    ) -> anyhow::Result<SkillDetail> {
+        let (skill_id, status): (Uuid, String) = sqlx::query_as(
+            "SELECT skill_id, status FROM skill_versions WHERE id = $1",
+        )
+        .bind(version_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("skill version {version_id} not found"))?;
+
+        if status != "approved" {
+            anyhow::bail!("only approved versions can be published");
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            r#"
+            UPDATE skill_versions
+            SET status = 'published',
+                published_by = $2,
+                published_at = now(),
+                updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(version_id)
+        .bind(actor_name)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE skills SET updated_at = now() WHERE id = $1")
+            .bind(skill_id)
+            .execute(&mut *tx)
+            .await?;
+        self.insert_skill_review_tx(
+            &mut tx,
+            version_id,
+            "published",
+            "publisher",
+            actor_name,
+            comment,
+        )
+        .await?;
+        tx.commit().await?;
+
+        self.get_skill_detail(skill_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("skill {skill_id} not found after publication"))
+    }
+
+    pub async fn list_skill_reviews(&self, skill_id: Uuid) -> anyhow::Result<Vec<SkillReviewEvent>> {
+        let rows = sqlx::query_as::<_, SkillReviewRow>(
+            r#"
+            SELECT
+                sr.id,
+                sr.skill_version_id,
+                sv.skill_id,
+                sr.action,
+                sr.actor_role,
+                sr.actor_name,
+                sr.comment,
+                sr.created_at
+            FROM skill_reviews sr
+            INNER JOIN skill_versions sv ON sv.id = sr.skill_version_id
+            WHERE sv.skill_id = $1
+            ORDER BY sr.created_at DESC
+            "#,
+        )
+        .bind(skill_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn list_skill_assignments(&self, skill_id: Uuid) -> anyhow::Result<Vec<SkillAssignment>> {
+        let rows = sqlx::query_as::<_, SkillAssignmentRow>(
+            r#"
+            SELECT
+                sa.id,
+                sa.skill_version_id,
+                sv.skill_id,
+                sv.version AS skill_version,
+                sa.target_type,
+                sa.target_key,
+                sa.created_at
+            FROM skill_assignments sa
+            INNER JOIN skill_versions sv ON sv.id = sa.skill_version_id
+            WHERE sv.skill_id = $1
+            ORDER BY sa.created_at DESC, sa.target_type ASC, sa.target_key ASC
+            "#,
+        )
+        .bind(skill_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn create_skill_assignment(
+        &self,
+        skill_id: Uuid,
+        input: CreateSkillAssignmentInput,
+    ) -> anyhow::Result<SkillDetail> {
+        let version = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT skill_id, status FROM skill_versions WHERE id = $1",
+        )
+        .bind(input.skill_version_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("skill version {} not found", input.skill_version_id))?;
+
+        if version.0 != skill_id {
+            anyhow::bail!("skill version {} does not belong to skill {skill_id}", input.skill_version_id);
+        }
+        if version.1 != "published" {
+            anyhow::bail!("only published skill versions can be assigned");
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO skill_assignments (id, skill_version_id, target_type, target_key)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (skill_version_id, target_type, target_key) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(input.skill_version_id)
+        .bind(&input.target_type)
+        .bind(&input.target_key)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_skill_detail(skill_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("skill {skill_id} not found after assignment"))
+    }
+
+    pub async fn delete_skill_assignment(
+        &self,
+        assignment_id: Uuid,
+    ) -> anyhow::Result<Option<SkillDetail>> {
+        let skill_id = sqlx::query_scalar::<_, Option<Uuid>>(
+            r#"
+            SELECT sv.skill_id
+            FROM skill_assignments sa
+            INNER JOIN skill_versions sv ON sv.id = sa.skill_version_id
+            WHERE sa.id = $1
+            "#,
+        )
+        .bind(assignment_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+
+        let Some(skill_id) = skill_id else {
+            return Ok(None);
+        };
+
+        sqlx::query("DELETE FROM skill_assignments WHERE id = $1")
+            .bind(assignment_id)
+            .execute(&self.pool)
+            .await?;
+
+        self.get_skill_detail(skill_id).await
+    }
+
+    pub async fn skill_assignment_targets(&self) -> anyhow::Result<SkillAssignmentTargets> {
+        let templates = self
+            .list_workflow_templates()
+            .await?
+            .into_iter()
+            .map(|template| template.template_key)
+            .collect();
+        Ok(SkillAssignmentTargets {
+            workflow_templates: templates,
+            agent_roles: stable_agent_roles()
+                .iter()
+                .map(|role| role.to_string())
+                .collect(),
+            providers: [
+                ProviderKind::Codex,
+                ProviderKind::Claude,
+                ProviderKind::Ollama,
+                ProviderKind::LlamaCpp,
+            ]
+            .into_iter()
+            .map(|provider| provider.as_str().to_string())
+            .collect(),
+        })
+    }
+
+    pub async fn resolve_workflow_skills(
+        &self,
+        workflow: &WorkflowSummary,
+        agents: &[WorkflowAgent],
+    ) -> anyhow::Result<Vec<ResolvedAgentSkill>> {
+        if agents.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query_as::<_, ResolvedSkillRow>(
+            r#"
+            WITH assignment_candidates AS (
+                SELECT
+                    wa.id AS agent_id,
+                    s.id AS skill_id,
+                    sv.id AS skill_version_id,
+                    s.name AS skill_name,
+                    sv.version AS skill_version,
+                    s.skill_type,
+                    sv.summary,
+                    sv.body,
+                    s.provider_exposure,
+                    sa.target_type AS source_target_type,
+                    sa.target_key AS source_target_key,
+                    CASE sa.target_type
+                        WHEN 'workflow_template' THEN 1
+                        WHEN 'agent_role' THEN 2
+                        WHEN 'provider' THEN 3
+                        ELSE 99
+                    END AS resolution_order,
+                    true AS applies_to_local_prompt,
+                    CASE
+                        WHEN s.skill_type = 'agent-context'
+                             AND s.provider_exposure <> 'local_only'
+                        THEN true
+                        ELSE false
+                    END AS applies_to_external_context,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY wa.id, s.id
+                        ORDER BY
+                            CASE sa.target_type
+                                WHEN 'workflow_template' THEN 1
+                                WHEN 'agent_role' THEN 2
+                                WHEN 'provider' THEN 3
+                                ELSE 99
+                            END DESC,
+                            sv.version DESC,
+                            sa.created_at DESC
+                    ) AS precedence_rank
+                FROM workflow_agents wa
+                INNER JOIN skill_assignments sa ON (
+                    (sa.target_type = 'workflow_template' AND sa.target_key = $2)
+                    OR (sa.target_type = 'agent_role' AND sa.target_key = wa.role)
+                    OR (sa.target_type = 'provider' AND sa.target_key = wa.provider)
+                )
+                INNER JOIN skill_versions sv ON sv.id = sa.skill_version_id AND sv.status = 'published'
+                INNER JOIN skills s ON s.id = sv.skill_id
+                WHERE wa.workflow_id = $1
+                  AND s.skill_type IN ('agent-context', 'policy')
+                  AND s.allowed_sensitivity_levels ? $3
+            )
+            SELECT
+                agent_id,
+                skill_id,
+                skill_version_id,
+                skill_name,
+                skill_version,
+                skill_type,
+                summary,
+                body,
+                provider_exposure,
+                source_target_type,
+                source_target_key,
+                resolution_order,
+                applies_to_local_prompt,
+                applies_to_external_context
+            FROM assignment_candidates
+            WHERE precedence_rank = 1
+            ORDER BY agent_id ASC, resolution_order DESC, skill_name ASC
+            "#,
+        )
+        .bind(workflow.id)
+        .bind(&workflow.template_key)
+        .bind(&workflow.sensitivity)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let external_by_agent = agents
+            .iter()
+            .map(|agent| (agent.id, !agent.provider.is_local()))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let mut resolved = ResolvedAgentSkill::from(row);
+                resolved.applies_to_external_context = resolved.applies_to_external_context
+                    && external_by_agent.get(&resolved.agent_id).copied().unwrap_or(false);
+                resolved
+            })
+            .collect())
+    }
+
+    async fn insert_skill_review_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        skill_version_id: Uuid,
+        action: &str,
+        actor_role: &str,
+        actor_name: &str,
+        comment: Option<&str>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO skill_reviews (id, skill_version_id, action, actor_role, actor_name, comment)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(skill_version_id)
+        .bind(action)
+        .bind(actor_role)
+        .bind(actor_name)
+        .bind(comment)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
     async fn upsert_workflow_template(&self, template: &WorkflowTemplate) -> anyhow::Result<()> {
         sqlx::query(
             r#"
@@ -2048,6 +2970,7 @@ pub struct WorkflowDetail {
     pub release_verdicts: Vec<WorkflowReleaseVerdict>,
     pub evidence: Vec<WorkflowEvidenceRecord>,
     pub snapshots: Vec<WorkflowSnapshot>,
+    pub resolved_skills: Vec<ResolvedAgentSkill>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -2159,6 +3082,208 @@ pub struct LlamaCppModel {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HardwareProfile {
+    pub id: Uuid,
+    pub profile_kind: String,
+    pub source_key: String,
+    pub payload: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ModelInstallJob {
+    pub id: Uuid,
+    pub actor_name: String,
+    pub source_app: String,
+    pub source_channel: String,
+    pub runtime_target: String,
+    pub catalog_key: Option<String>,
+    pub source_ref: Option<String>,
+    pub checksum_expected: Option<String>,
+    pub checksum_actual: Option<String>,
+    pub destination_ref: Option<String>,
+    pub status: String,
+    pub progress_percent: i32,
+    pub detail: Option<String>,
+    pub error_text: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateModelInstallJobInput {
+    pub actor_name: String,
+    pub source_app: String,
+    pub source_channel: String,
+    pub runtime_target: String,
+    pub catalog_key: Option<String>,
+    pub source_ref: Option<String>,
+    pub checksum_expected: Option<String>,
+    pub status: String,
+    pub progress_percent: i32,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UpdateModelInstallJobInput {
+    pub status: String,
+    pub progress_percent: i32,
+    pub detail: Option<String>,
+    pub checksum_actual: Option<String>,
+    pub destination_ref: Option<String>,
+    pub error_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SkillListFilters {
+    pub tenant_key: String,
+    pub skill_type: Option<String>,
+    pub status: Option<String>,
+    pub tag: Option<String>,
+    pub owner: Option<String>,
+    pub sensitivity: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateSkillInput {
+    pub tenant_key: String,
+    pub slug: String,
+    pub name: String,
+    pub skill_type: String,
+    pub description: String,
+    pub owner: String,
+    pub visibility: String,
+    pub tags: Vec<String>,
+    pub allowed_sensitivity_levels: Vec<String>,
+    pub provider_exposure: String,
+    pub source_kind: String,
+    pub initial_version: CreateSkillVersionInput,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateSkillVersionInput {
+    pub summary: String,
+    pub body: serde_json::Value,
+    pub examples: Vec<String>,
+    pub constraints: Vec<String>,
+    pub review_notes: Option<String>,
+    pub created_by: String,
+    pub source_ref: Option<String>,
+    pub dataset_pack_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillSummary {
+    pub id: Uuid,
+    pub tenant_key: String,
+    pub slug: String,
+    pub name: String,
+    pub skill_type: String,
+    pub description: String,
+    pub status: String,
+    pub owner: String,
+    pub visibility: String,
+    pub tags: Vec<String>,
+    pub allowed_sensitivity_levels: Vec<String>,
+    pub provider_exposure: String,
+    pub source_kind: String,
+    pub assignment_count: i64,
+    pub latest_version: Option<i32>,
+    pub latest_version_status: Option<String>,
+    pub latest_version_summary: Option<String>,
+    pub latest_version_updated_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillVersion {
+    pub id: Uuid,
+    pub skill_id: Uuid,
+    pub version: i32,
+    pub status: String,
+    pub body: serde_json::Value,
+    pub summary: String,
+    pub examples: Vec<String>,
+    pub constraints: Vec<String>,
+    pub review_notes: Option<String>,
+    pub created_by: String,
+    pub approved_by: Option<String>,
+    pub published_by: Option<String>,
+    pub source_ref: Option<String>,
+    pub dataset_pack_key: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillReviewEvent {
+    pub id: Uuid,
+    pub skill_version_id: Uuid,
+    pub skill_id: Uuid,
+    pub action: String,
+    pub actor_role: String,
+    pub actor_name: String,
+    pub comment: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillDetail {
+    pub skill: SkillSummary,
+    pub versions: Vec<SkillVersion>,
+    pub reviews: Vec<SkillReviewEvent>,
+    pub assignments: Vec<SkillAssignment>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillAssignment {
+    pub id: Uuid,
+    pub skill_version_id: Uuid,
+    pub skill_id: Uuid,
+    pub skill_version: i32,
+    pub target_type: String,
+    pub target_key: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateSkillAssignmentInput {
+    pub skill_version_id: Uuid,
+    pub target_type: String,
+    pub target_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResolvedAgentSkill {
+    pub agent_id: Uuid,
+    pub skill_id: Uuid,
+    pub skill_version_id: Uuid,
+    pub skill_name: String,
+    pub skill_version: i32,
+    pub skill_type: String,
+    pub summary: String,
+    pub body: serde_json::Value,
+    pub provider_exposure: String,
+    pub source_target_type: String,
+    pub source_target_key: String,
+    pub resolution_order: i32,
+    pub applies_to_local_prompt: bool,
+    pub applies_to_external_context: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SkillAssignmentTargets {
+    pub workflow_templates: Vec<String>,
+    pub agent_roles: Vec<String>,
+    pub providers: Vec<String>,
 }
 
 #[derive(FromRow)]
@@ -2405,6 +3530,124 @@ struct LlamaCppModelRow {
     enabled: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct HardwareProfileRow {
+    id: Uuid,
+    profile_kind: String,
+    source_key: String,
+    payload: serde_json::Value,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct ModelInstallJobRow {
+    id: Uuid,
+    actor_name: String,
+    source_app: String,
+    source_channel: String,
+    runtime_target: String,
+    catalog_key: Option<String>,
+    source_ref: Option<String>,
+    checksum_expected: Option<String>,
+    checksum_actual: Option<String>,
+    destination_ref: Option<String>,
+    status: String,
+    progress_percent: i32,
+    detail: Option<String>,
+    error_text: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(FromRow)]
+struct SkillSummaryRow {
+    id: Uuid,
+    tenant_key: String,
+    slug: String,
+    name: String,
+    skill_type: String,
+    description: String,
+    status: String,
+    owner: String,
+    visibility: String,
+    tags: serde_json::Value,
+    allowed_sensitivity_levels: serde_json::Value,
+    provider_exposure: String,
+    source_kind: String,
+    assignment_count: i64,
+    latest_version: Option<i32>,
+    latest_version_status: Option<String>,
+    latest_version_summary: Option<String>,
+    latest_version_updated_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct SkillVersionRow {
+    id: Uuid,
+    skill_id: Uuid,
+    version: i32,
+    status: String,
+    body: serde_json::Value,
+    summary: String,
+    examples: serde_json::Value,
+    constraints: serde_json::Value,
+    review_notes: Option<String>,
+    created_by: String,
+    approved_by: Option<String>,
+    published_by: Option<String>,
+    source_ref: Option<String>,
+    dataset_pack_key: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    approved_at: Option<DateTime<Utc>>,
+    published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(FromRow)]
+struct SkillReviewRow {
+    id: Uuid,
+    skill_version_id: Uuid,
+    skill_id: Uuid,
+    action: String,
+    actor_role: String,
+    actor_name: String,
+    comment: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct SkillAssignmentRow {
+    id: Uuid,
+    skill_version_id: Uuid,
+    skill_id: Uuid,
+    skill_version: i32,
+    target_type: String,
+    target_key: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+struct ResolvedSkillRow {
+    agent_id: Uuid,
+    skill_id: Uuid,
+    skill_version_id: Uuid,
+    skill_name: String,
+    skill_version: i32,
+    skill_type: String,
+    summary: String,
+    body: serde_json::Value,
+    provider_exposure: String,
+    source_target_type: String,
+    source_target_key: String,
+    resolution_order: i32,
+    applies_to_local_prompt: bool,
+    applies_to_external_context: bool,
 }
 
 impl TryFrom<ChatSummaryRow> for ChatSummary {
@@ -2760,6 +4003,152 @@ impl From<LlamaCppModelRow> for LlamaCppModel {
     }
 }
 
+impl From<HardwareProfileRow> for HardwareProfile {
+    fn from(value: HardwareProfileRow) -> Self {
+        Self {
+            id: value.id,
+            profile_kind: value.profile_kind,
+            source_key: value.source_key,
+            payload: value.payload,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<ModelInstallJobRow> for ModelInstallJob {
+    fn from(value: ModelInstallJobRow) -> Self {
+        Self {
+            id: value.id,
+            actor_name: value.actor_name,
+            source_app: value.source_app,
+            source_channel: value.source_channel,
+            runtime_target: value.runtime_target,
+            catalog_key: value.catalog_key,
+            source_ref: value.source_ref,
+            checksum_expected: value.checksum_expected,
+            checksum_actual: value.checksum_actual,
+            destination_ref: value.destination_ref,
+            status: value.status,
+            progress_percent: value.progress_percent,
+            detail: value.detail,
+            error_text: value.error_text,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            finished_at: value.finished_at,
+        }
+    }
+}
+
+impl TryFrom<SkillSummaryRow> for SkillSummary {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SkillSummaryRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: value.id,
+            tenant_key: value.tenant_key,
+            slug: value.slug,
+            name: value.name,
+            skill_type: value.skill_type,
+            description: value.description,
+            status: value.status,
+            owner: value.owner,
+            visibility: value.visibility,
+            tags: parse_string_list(value.tags, "skill tags")?,
+            allowed_sensitivity_levels: parse_string_list(
+                value.allowed_sensitivity_levels,
+                "skill allowed_sensitivity_levels",
+            )?,
+            provider_exposure: value.provider_exposure,
+            source_kind: value.source_kind,
+            assignment_count: value.assignment_count,
+            latest_version: value.latest_version,
+            latest_version_status: value.latest_version_status,
+            latest_version_summary: value.latest_version_summary,
+            latest_version_updated_at: value.latest_version_updated_at,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        })
+    }
+}
+
+impl TryFrom<SkillVersionRow> for SkillVersion {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SkillVersionRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: value.id,
+            skill_id: value.skill_id,
+            version: value.version,
+            status: value.status,
+            body: value.body,
+            summary: value.summary,
+            examples: parse_string_list(value.examples, "skill examples")?,
+            constraints: parse_string_list(value.constraints, "skill constraints")?,
+            review_notes: value.review_notes,
+            created_by: value.created_by,
+            approved_by: value.approved_by,
+            published_by: value.published_by,
+            source_ref: value.source_ref,
+            dataset_pack_key: value.dataset_pack_key,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            approved_at: value.approved_at,
+            published_at: value.published_at,
+        })
+    }
+}
+
+impl From<SkillReviewRow> for SkillReviewEvent {
+    fn from(value: SkillReviewRow) -> Self {
+        Self {
+            id: value.id,
+            skill_version_id: value.skill_version_id,
+            skill_id: value.skill_id,
+            action: value.action,
+            actor_role: value.actor_role,
+            actor_name: value.actor_name,
+            comment: value.comment,
+            created_at: value.created_at,
+        }
+    }
+}
+
+impl From<SkillAssignmentRow> for SkillAssignment {
+    fn from(value: SkillAssignmentRow) -> Self {
+        Self {
+            id: value.id,
+            skill_version_id: value.skill_version_id,
+            skill_id: value.skill_id,
+            skill_version: value.skill_version,
+            target_type: value.target_type,
+            target_key: value.target_key,
+            created_at: value.created_at,
+        }
+    }
+}
+
+impl From<ResolvedSkillRow> for ResolvedAgentSkill {
+    fn from(value: ResolvedSkillRow) -> Self {
+        Self {
+            agent_id: value.agent_id,
+            skill_id: value.skill_id,
+            skill_version_id: value.skill_version_id,
+            skill_name: value.skill_name,
+            skill_version: value.skill_version,
+            skill_type: value.skill_type,
+            summary: value.summary,
+            body: value.body,
+            provider_exposure: value.provider_exposure,
+            source_target_type: value.source_target_type,
+            source_target_key: value.source_target_key,
+            resolution_order: value.resolution_order,
+            applies_to_local_prompt: value.applies_to_local_prompt,
+            applies_to_external_context: value.applies_to_external_context,
+        }
+    }
+}
+
 fn parse_provider(value: &str) -> anyhow::Result<ProviderKind> {
     match value {
         "codex" => Ok(ProviderKind::Codex),
@@ -2768,6 +4157,20 @@ fn parse_provider(value: &str) -> anyhow::Result<ProviderKind> {
         "llama_cpp" => Ok(ProviderKind::LlamaCpp),
         other => anyhow::bail!("unknown provider {other}"),
     }
+}
+
+fn parse_string_list(value: serde_json::Value, field: &str) -> anyhow::Result<Vec<String>> {
+    serde_json::from_value(value).with_context(|| format!("invalid {field}"))
+}
+
+pub fn stable_agent_roles() -> &'static [&'static str] {
+    &[
+        "planner",
+        "researcher",
+        "coder",
+        "evidence_collector",
+        "reality_checker",
+    ]
 }
 
 fn parse_event_kind(value: &str) -> anyhow::Result<EventKind> {

@@ -3,8 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type {
   ApprovalGate,
-  LlamaCppModel,
-  McpServer,
   ProviderKind,
   ProviderView,
   TerminalOutput,
@@ -29,16 +27,7 @@ export function AgentMode({ providers }: AgentModeProps) {
   const [templateKey, setTemplateKey] = useState("engineering_pipeline");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
-  const [llamaModels, setLlamaModels] = useState<LlamaCppModel[]>([]);
   const [snapshotLabel, setSnapshotLabel] = useState("");
-  const [mcpName, setMcpName] = useState("");
-  const [mcpCommand, setMcpCommand] = useState("");
-  const [mcpArgs, setMcpArgs] = useState("");
-  const [llamaAlias, setLlamaAlias] = useState("");
-  const [llamaPath, setLlamaPath] = useState("");
-  const [llamaQuant, setLlamaQuant] = useState("");
-  const [llamaContext, setLlamaContext] = useState("8192");
   const [workflowPage, setWorkflowPage] = useState(0);
   const [approvalsPage, setApprovalsPage] = useState(0);
   const [artifactsPage, setArtifactsPage] = useState(0);
@@ -58,7 +47,6 @@ export function AgentMode({ providers }: AgentModeProps) {
 
   useEffect(() => {
     void loadWorkflows();
-    void loadLocalTooling();
     void loadTemplates();
   }, []);
 
@@ -136,15 +124,6 @@ export function AgentMode({ providers }: AgentModeProps) {
     if (updateActive && !activeWorkflowId && next.length > 0) {
       setActiveWorkflowId(next[0].id);
     }
-  }
-
-  async function loadLocalTooling() {
-    const [servers, models] = await Promise.all([
-      api.listMcpServers(),
-      api.listLlamaCppModels(),
-    ]);
-    setMcpServers(servers);
-    setLlamaModels(models);
   }
 
   async function loadTemplates() {
@@ -294,67 +273,6 @@ export function AgentMode({ providers }: AgentModeProps) {
     [detail?.snapshots, snapshotsPage],
   );
 
-  async function saveMcpServer() {
-    if (!mcpName.trim() || !mcpCommand.trim()) return;
-    try {
-      await api.upsertMcpServer({
-        name: mcpName.trim(),
-        command: mcpCommand.trim(),
-        args: mcpArgs
-          .split(" ")
-          .map((value) => value.trim())
-          .filter(Boolean),
-        local_only: true,
-        enabled: true,
-        allowed_providers: ["ollama", "llama_cpp"],
-      });
-      setMcpName("");
-      setMcpCommand("");
-      setMcpArgs("");
-      await loadLocalTooling();
-    } catch (err) {
-      setError(asError(err));
-    }
-  }
-
-  async function toggleMcp(server: McpServer) {
-    try {
-      await api.setMcpServerEnabled(server.id, !server.enabled);
-      await loadLocalTooling();
-    } catch (err) {
-      setError(asError(err));
-    }
-  }
-
-  async function saveLlamaModel() {
-    if (!llamaAlias.trim() || !llamaPath.trim()) return;
-    try {
-      await api.upsertLlamaCppModel({
-        alias: llamaAlias.trim(),
-        file_path: llamaPath.trim(),
-        quantization: llamaQuant.trim() || null,
-        context_window: Number.parseInt(llamaContext, 10) || null,
-        enabled: true,
-      });
-      setLlamaAlias("");
-      setLlamaPath("");
-      setLlamaQuant("");
-      setLlamaContext("8192");
-      await loadLocalTooling();
-    } catch (err) {
-      setError(asError(err));
-    }
-  }
-
-  async function toggleLlamaModel(model: LlamaCppModel) {
-    try {
-      await api.setLlamaCppModelEnabled(model.id, !model.enabled);
-      await loadLocalTooling();
-    } catch (err) {
-      setError(asError(err));
-    }
-  }
-
   return (
     <section className="agents-screen">
       <section className="agents-sidebar card">
@@ -454,7 +372,18 @@ export function AgentMode({ providers }: AgentModeProps) {
             </div>
           </div>
 
-          {selectedTemplate ? <p className="muted-copy">{selectedTemplate.description}</p> : null}
+          {selectedTemplate ? (
+            <>
+              <p className="muted-copy">{selectedTemplate.description}</p>
+              <div className="template-role-strip">
+                {selectedTemplate.default_agent_roles.map((role) => (
+                  <span key={role} className="chip">
+                    {role}
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : null}
 
           <button className="primary" disabled={creating} onClick={() => void createWorkflow()}>
             {creating ? "Creating..." : "Create workflow"}
@@ -491,107 +420,6 @@ export function AgentMode({ providers }: AgentModeProps) {
           totalPages={visibleWorkflows.totalPages}
           onChange={setWorkflowPage}
         />
-
-        <div className="tooling-panel">
-          <div className="section-head">
-            <div>
-              <span className="eyebrow">Local tooling</span>
-              <h4>MCP and llama.cpp</h4>
-            </div>
-          </div>
-
-          <div className="tooling-block">
-            <strong>MCP registry</strong>
-            <div className="form-row">
-              <label>Name</label>
-              <input value={mcpName} onChange={(event) => setMcpName(event.target.value)} />
-            </div>
-            <div className="form-row">
-              <label>Command</label>
-              <input
-                value={mcpCommand}
-                onChange={(event) => setMcpCommand(event.target.value)}
-                placeholder="npx or local binary"
-              />
-            </div>
-            <div className="form-row">
-              <label>Args</label>
-              <input
-                value={mcpArgs}
-                onChange={(event) => setMcpArgs(event.target.value)}
-                placeholder="space separated args"
-              />
-            </div>
-            <button className="ghost" onClick={() => void saveMcpServer()}>
-              Save MCP server
-            </button>
-            <div className="mini-list">
-              {mcpServers.map((server) => (
-                <button
-                  key={server.id}
-                  className="mini-list-item"
-                  onClick={() => void toggleMcp(server)}
-                >
-                  <span>{server.name}</span>
-                  <span>{server.enabled ? "enabled" : "disabled"}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="tooling-block">
-            <strong>llama.cpp models</strong>
-            <div className="form-row">
-              <label>Alias</label>
-              <input
-                value={llamaAlias}
-                onChange={(event) => setLlamaAlias(event.target.value)}
-                placeholder="llama-8b-q4"
-              />
-            </div>
-            <div className="form-row">
-              <label>GGUF path</label>
-              <input
-                value={llamaPath}
-                onChange={(event) => setLlamaPath(event.target.value)}
-                placeholder="relative to LLAMA_CPP_MODEL_DIR or absolute path"
-              />
-            </div>
-            <div className="workflow-create-grid">
-              <div className="form-row">
-                <label>Quant</label>
-                <input
-                  value={llamaQuant}
-                  onChange={(event) => setLlamaQuant(event.target.value)}
-                  placeholder="Q4_K_M"
-                />
-              </div>
-              <div className="form-row">
-                <label>Context</label>
-                <input
-                  value={llamaContext}
-                  onChange={(event) => setLlamaContext(event.target.value)}
-                  placeholder="8192"
-                />
-              </div>
-            </div>
-            <button className="ghost" onClick={() => void saveLlamaModel()}>
-              Save GGUF model
-            </button>
-            <div className="mini-list">
-              {llamaModels.map((model) => (
-                <button
-                  key={model.id}
-                  className="mini-list-item"
-                  onClick={() => void toggleLlamaModel(model)}
-                >
-                  <span>{model.alias}</span>
-                  <span>{model.enabled ? "enabled" : "disabled"}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
       </section>
 
       <section className="agents-main">
@@ -619,6 +447,13 @@ export function AgentMode({ providers }: AgentModeProps) {
                 <AgentMetric label="Sensitivity" value={detail.workflow.sensitivity} />
                 <AgentMetric label="Status" value={detail.workflow.status} />
                 <AgentMetric label="Attempts" value={String(detail.workflow.attempt_counter)} />
+                <AgentMetric label="Agents" value={String(detail.agents.length)} />
+                <AgentMetric
+                  label="Approvals"
+                  value={String(
+                    detail.approvals.filter((approval) => approval.status === "pending").length,
+                  )}
+                />
               </div>
 
               <div className="approval-actions">
@@ -636,6 +471,12 @@ export function AgentMode({ providers }: AgentModeProps) {
                 const terminal = detail.terminals.find((item) => item.agent_id === agent.id);
                 const lines = terminal ? (terminalBuffers[terminal.id] ?? []).slice(-6) : [];
                 const latestQa = detail.qa_verdicts.find((verdict) => verdict.agent_id === agent.id);
+                const agentResolvedSkills = detail.resolved_skills.filter(
+                  (skill) => skill.agent_id === agent.id,
+                );
+                const externalSkills = agentResolvedSkills.filter(
+                  (skill) => skill.applies_to_external_context,
+                );
                 return (
                   <article key={agent.id} className="agent-panel card">
                     <div className="agent-panel-head">
@@ -669,6 +510,48 @@ export function AgentMode({ providers }: AgentModeProps) {
                       <span>Phase: {detail.workflow.phase}</span>
                       <span>QA: {latestQa?.verdict ?? "n/a"}</span>
                       <span>{terminal?.worktree_path ?? "workspace pending"}</span>
+                    </div>
+
+                    <div className="agent-skill-preview">
+                      <div className="artifact-head">
+                        <strong>Resolved skills</strong>
+                        <span className="chip">{agentResolvedSkills.length}</span>
+                      </div>
+                      {agentResolvedSkills.length === 0 ? (
+                        <p className="muted-copy">
+                          No published `agent-context` or `policy` skills resolved for this agent.
+                        </p>
+                      ) : (
+                        <div className="artifact-list">
+                          {agentResolvedSkills.map((skill) => (
+                            <div key={skill.skill_version_id} className="artifact-item">
+                              <div className="artifact-head">
+                                <strong>
+                                  {skill.skill_name} v{skill.skill_version}
+                                </strong>
+                                <span className="chip">{skill.skill_type}</span>
+                              </div>
+                              <div className="chat-index-tags">
+                                <span className="chip">
+                                  {skill.source_target_type}:{skill.source_target_key}
+                                </span>
+                                {skill.applies_to_local_prompt ? (
+                                  <span className="chip chip-blue">local prompt</span>
+                                ) : null}
+                                {skill.applies_to_external_context ? (
+                                  <span className="chip">external context</span>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {!isLocalProvider(agent.provider) && externalSkills.length > 0 ? (
+                        <p className="muted-copy">
+                          If approval is granted, {externalSkills.length} `agent-context` skill
+                          {externalSkills.length === 1 ? "" : "s"} may leave the host.
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="approval-actions">
@@ -712,6 +595,18 @@ export function AgentMode({ providers }: AgentModeProps) {
                               : ""}
                             {approval.status}
                           </p>
+                          {approvalExternalSkills(approval).length > 0 ? (
+                            <div className="chat-index-tags approval-skill-tags">
+                              {approvalExternalSkills(approval).map((skill) => (
+                                <span
+                                  key={`${approval.id}-${String(skill.skill_version_id)}`}
+                                  className="chip"
+                                >
+                                  {String(skill.name)} v{String(skill.version)}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
 
                         {approval.status === "pending" ? (
@@ -914,6 +809,15 @@ function AgentMetric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function approvalExternalSkills(approval: ApprovalGate) {
+  const value = approval.requested_context.external_context_skills;
+  return Array.isArray(value) ? value : [];
+}
+
+function isLocalProvider(provider: ProviderKind) {
+  return provider === "ollama" || provider === "llama_cpp";
 }
 
 function labelProvider(provider: ProviderKind) {
